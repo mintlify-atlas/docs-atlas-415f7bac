@@ -1,0 +1,247 @@
+---
+title: Gateway Nodes
+description: Configure Garage gateway nodes for improved performance and simplified architecture
+---
+
+Gateway nodes are Garage cluster members that serve S3 API and website endpoints without storing data locally. They provide an optimized access layer for your Garage cluster.
+
+## What is a Gateway Node?
+
+A gateway node participates in the Garage cluster as a full member but is configured to store zero data blocks. It handles S3 API requests and serves static websites while forwarding storage operations to data nodes.
+
+## Benefits of Gateway Nodes
+
+### Reduced Network Latency
+
+Gateway nodes eliminate 1-2 network round trips:
+- **Without gateway**: Client → Reverse Proxy → Random Node → Storage Node(s)
+- **With gateway**: Client → Gateway Node → Storage Node(s)
+
+The gateway node knows the cluster topology and directly contacts the correct storage nodes.
+
+### Simplified Server Management
+
+Benefits include:
+- **No reverse proxy updates needed** - Gateway nodes track cluster membership automatically
+- **Consistent endpoints** - Always connect to `http://localhost:3900`
+- **Automatic failover** - Gateway nodes handle node availability internally
+
+### Enhanced Security
+
+Gateway nodes improve security posture:
+- **No TLS certificate management** - Use Garage's encrypted RPC protocol
+- **Local-only access** - S3 API available only on localhost
+- **Encrypted cluster communication** - All inter-node traffic uses Secret Handshake protocol
+
+## Setting Up a Gateway Node
+
+### Prerequisites
+
+- Running Garage cluster with at least one data node
+- Garage binary installed on the gateway machine
+- Network connectivity to cluster RPC ports
+
+### Configuration
+
+Gateway nodes use the same configuration file format as regular nodes. The key difference is in the layout assignment, not the configuration.
+
+**Example garage.toml:**
+```toml
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+
+replication_factor = 3
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "192.168.1.10:3901"
+rpc_secret = "your-cluster-rpc-secret-here"
+
+[s3_api]
+api_bind_addr = "127.0.0.1:3900"
+s3_region = "garage"
+root_domain = ".s3.garage.localhost"
+
+[s3_web]
+bind_addr = "127.0.0.1:3902"
+root_domain = ".web.garage.localhost"
+
+[admin]
+api_bind_addr = "127.0.0.1:3903"
+metrics_token = "your-metrics-token"
+admin_token = "your-admin-token"
+```
+
+<Note>
+Bind S3 API and web endpoints to `127.0.0.1` (localhost) on gateway nodes to restrict access to local applications only.
+</Note>
+
+### Assigning Gateway Role
+
+The critical step is assigning the node with the `--gateway` flag:
+
+```bash
+# Add the gateway node to the cluster layout
+garage layout assign --gateway --tag gw1 -z dc1 <node_id>
+
+# Review the layout changes
+garage layout show
+
+# Apply the changes
+garage layout apply
+```
+
+**Parameters explained:**
+- `--gateway`: Marks the node as a gateway (no data storage)
+- `--tag gw1`: Assigns a human-readable tag for identification
+- `-z dc1`: Assigns the node to a zone (for topology awareness)
+- `<node_id>`: The node's unique identifier (from `garage node id`)
+
+### Verifying Gateway Operation
+
+Check that the gateway node is operational:
+
+```bash
+# Check node status
+garage status
+
+# Test S3 API locally
+aws --endpoint-url http://127.0.0.1:3900 s3 ls
+
+# Check gateway is not storing data
+du -sh /var/lib/garage/data
+```
+
+The data directory should remain minimal, containing only metadata.
+
+## Troubleshooting
+
+### Gateway Not Working After Addition
+
+If a newly added gateway seems non-functional, perform a full table resync:
+
+```bash
+garage repair -a --yes tables
+```
+
+This ensures bucket and key information is properly propagated to the gateway node.
+
+### Connection Refused Errors
+
+Verify the gateway can reach storage nodes:
+
+```bash
+# Check RPC connectivity
+telnet <storage-node-ip> 3901
+
+# Check Garage logs
+journalctl -u garage -f
+```
+
+Ensure:
+- RPC ports (3901) are not firewalled
+- `rpc_secret` matches across all nodes
+- `rpc_public_addr` is correctly configured on storage nodes
+
+### Performance Issues
+
+If gateway performance is poor:
+
+1. **Check network latency** to storage nodes:
+   ```bash
+   ping <storage-node-ip>
+   ```
+
+2. **Monitor gateway resource usage**:
+   ```bash
+   htop
+   ```
+
+3. **Review Prometheus metrics** at `http://localhost:3903/metrics`
+
+## Deployment Patterns
+
+### Co-located Gateway
+
+Run a gateway node on each application server:
+
+```
+┌─────────────────┐
+│ Application     │
+│   ↓ localhost   │
+│ Gateway Node    │
+│   ↓ cluster RPC │
+│ Storage Nodes   │
+└─────────────────┘
+```
+
+**Advantages:**
+- Minimal latency
+- No network bandwidth between app and gateway
+- Simple security model
+
+### Dedicated Gateway Cluster
+
+Deploy multiple gateway nodes behind a load balancer:
+
+```
+┌──────────┐
+│  LB      │
+│  ↓   ↓   │
+│ GW1  GW2 │
+│  ↓   ↓   │
+│ Storage  │
+└──────────┘
+```
+
+**Advantages:**
+- Scalable gateway capacity
+- High availability
+- Separation of concerns
+
+### Multi-Site with Local Gateways
+
+Gateway nodes in each datacenter:
+
+```
+DC1: App → GW1 ──┐
+                  ├→ Distributed Storage
+DC2: App → GW2 ──┘
+```
+
+**Advantages:**
+- Reduced cross-datacenter traffic
+- Better data locality
+- Geographic redundancy
+
+## Best Practices
+
+1. **Use descriptive tags** - Name gateways by location or purpose (e.g., `gw-web-dc1`)
+2. **Assign zones appropriately** - Place gateways in zones they primarily serve
+3. **Monitor gateway health** - Track metrics for request latency and error rates
+4. **Don't overload gateways** - Scale gateway count with request volume
+5. **Secure localhost bindings** - Use firewall rules if needed to prevent local access
+
+## Gateway Limitations
+
+- Gateway nodes count toward cluster membership but not storage capacity
+- Gateway nodes still maintain metadata databases (buckets, keys, indices)
+- Gateway nodes cannot serve requests if all storage nodes in a quorum are unavailable
+
+## Converting Nodes
+
+You can convert between gateway and storage nodes:
+
+```bash
+# Convert storage node to gateway
+garage layout assign --gateway <node_id>
+garage layout apply
+
+# Convert gateway to storage node
+garage layout assign -c 1T -z dc1 <node_id>
+garage layout apply
+```
+
+<Warning>
+Converting a storage node to a gateway will trigger data rebalancing. Ensure sufficient capacity exists on remaining storage nodes before converting.
+</Warning>

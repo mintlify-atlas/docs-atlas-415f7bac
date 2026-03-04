@@ -1,122 +1,157 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Garage",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#fa932c",
+    "light": "#524e4b",
+    "dark": "#a8713b"
   },
   "favicon": "/favicon.svg",
+  "logo": {
+    "light": "https://media.brand.dev/50676424-292a-4101-82f6-46b694144186.svg",
+    "dark": "https://media.brand.dev/50676424-292a-4101-82f6-46b694144186.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/deuxfleurs-org/garage"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/deuxfleurs-org/garage"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "quick-start"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Design & Architecture",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "design/goals",
+              "design/features",
+              "design/internals",
+              "design/related-work"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Installation",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "installation/binary-packages",
+              "installation/from-source",
+              "installation/docker"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Deployment",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "deployment/single-node",
+              "deployment/multi-node",
+              "deployment/kubernetes",
+              "deployment/systemd"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/cluster-layout",
+              "operations/durability-repairs",
+              "operations/upgrading",
+              "operations/recovering",
+              "operations/multi-hdd",
+              "operations/monitoring"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "integration/cli-tools",
+              "integration/applications",
+              "integration/websites"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/reverse-proxy",
+              "advanced/encryption",
+              "advanced/gateways",
+              "advanced/k2v"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "api/overview",
+              "api/s3-compatibility"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "S3 API",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/s3/authentication",
+              "api/s3/bucket-operations",
+              "api/s3/object-operations",
+              "api/s3/multipart-uploads"
+            ]
+          },
+          {
+            "group": "Admin API",
+            "pages": [
+              "api/admin/overview",
+              "api/admin/cluster",
+              "api/admin/buckets",
+              "api/admin/keys"
+            ]
+          },
+          {
+            "group": "K2V API",
+            "pages": [
+              "api/k2v/overview",
+              "api/k2v/operations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/overview",
+              "cli/server",
+              "cli/node",
+              "cli/layout",
+              "cli/bucket",
+              "cli/key",
+              "cli/repair"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "cli/configuration",
+              "cli/environment-variables"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

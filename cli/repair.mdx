@@ -1,0 +1,558 @@
+---
+title: garage repair
+description: Run data repair and maintenance operations
+---
+
+## Description
+
+The `garage repair` command launches various repair and maintenance operations on the cluster. These operations ensure data integrity, fix inconsistencies, and maintain optimal cluster health.
+
+Repair operations can be run on the local node or across all nodes in the cluster.
+
+## Usage
+
+```bash
+garage repair [OPTIONS] <OPERATION>
+```
+
+## Global Options
+
+<ParamField path="-a, --all-nodes" type="flag">
+  Launch the repair operation on all nodes in the cluster.
+  
+  If not specified, the operation runs only on the local node or the node specified by `--rpc-host`.
+</ParamField>
+
+<ParamField path="--yes" type="flag" required>
+  Confirm the launch of the repair operation.
+  
+  Required to prevent accidental execution of potentially intensive operations.
+</ParamField>
+
+## Repair Operations
+
+### tables
+
+Perform a full synchronization of metadata tables across the cluster.
+
+```bash
+garage repair --yes tables
+```
+
+This operation:
+- Synchronizes all metadata table entries
+- Ensures consistency across all nodes
+- Useful after network partitions or extended node downtime
+
+**When to use**: After recovering from a network split or when you suspect metadata inconsistencies.
+
+### blocks
+
+Repair (resync/rebalance) the set of stored data blocks in the cluster.
+
+```bash
+garage repair --yes blocks
+```
+
+This operation:
+- Verifies block replication meets requirements
+- Replicates under-replicated blocks
+- Rebalances blocks according to current layout
+- Removes blocks that are over-replicated
+
+**When to use**: After layout changes, node failures, or when data distribution seems uneven.
+
+### clear-resync-queue
+
+Clear the block resync queue and the list of blocks in errored state.
+
+```bash
+garage repair --yes clear-resync-queue
+```
+
+**Warning**: You MUST run `garage repair blocks` immediately after using this command.
+
+This operation:
+- Clears the internal resync queue
+- Resets error counters for blocks
+- Prepares for a fresh block repair pass
+
+**When to use**: When the resync queue is stuck or corrupted. Always follow with `blocks` repair.
+
+### versions
+
+Repropagate object deletions to the version table.
+
+```bash
+garage repair --yes versions
+```
+
+This operation:
+- Ensures deleted objects are properly marked in version table
+- Cleans up orphaned version entries
+- Fixes inconsistencies in object metadata
+
+**When to use**: When deleted objects still appear or object counts seem wrong.
+
+### mpu
+
+Repropagate object deletions to the multipart upload table.
+
+```bash
+garage repair --yes mpu
+```
+
+This operation:
+- Cleans up incomplete multipart uploads
+- Removes orphaned multipart metadata
+- Fixes multipart upload table inconsistencies
+
+**When to use**: When multipart uploads are stuck or showing incorrect status.
+
+### block-refs
+
+Repropagate version deletions to the block reference table.
+
+```bash
+garage repair --yes block-refs
+```
+
+This operation:
+- Updates block reference counts
+- Ensures blocks are correctly marked for deletion
+- Fixes reference count inconsistencies
+
+**When to use**: When storage space isn't being freed after deletions.
+
+### block-rc
+
+Recalculate block reference counters from scratch.
+
+```bash
+garage repair --yes block-rc
+```
+
+This operation:
+- Scans all objects and versions
+- Rebuilds block reference counters
+- Fixes counter corruption or drift
+
+**When to use**: When block reference counts are incorrect and causing storage issues.
+
+### aliases
+
+Fix inconsistencies in bucket aliases.
+
+```bash
+garage repair --yes aliases
+```
+
+**Warning**: This is an EXPERIMENTAL operation.
+
+This operation:
+- Repairs bucket alias mappings
+- Fixes inconsistencies between global and local aliases
+- Resolves alias conflicts
+
+**When to use**: When bucket aliases are not working correctly or showing errors.
+
+### scrub
+
+Verify integrity of all blocks on disk.
+
+```bash
+garage repair --yes scrub <SUBCOMMAND>
+```
+
+#### Scrub Subcommands
+
+##### scrub start
+
+Start a scrub operation that verifies all blocks.
+
+```bash
+garage repair --yes scrub start
+```
+
+Reads every block from disk and verifies its checksum. Reports any corrupted blocks.
+
+##### scrub pause
+
+Pause a running scrub operation.
+
+```bash
+garage repair --yes scrub pause
+```
+
+Note: Scrub automatically resumes after 24 hours.
+
+##### scrub resume
+
+Resume a paused scrub operation.
+
+```bash
+garage repair --yes scrub resume
+```
+
+##### scrub cancel
+
+Cancel a scrub operation in progress.
+
+```bash
+garage repair --yes scrub cancel
+```
+
+Progress is lost; next scrub starts from the beginning.
+
+### rebalance
+
+Rebalance data blocks among HDDs on individual nodes.
+
+```bash
+garage repair --yes rebalance
+```
+
+This operation:
+- Balances data across multiple data directories on each node
+- Useful when you've added or removed data directories
+- Only affects multi-data-directory configurations
+
+**When to use**: After adding or removing data directories in node configuration.
+
+## Examples
+
+### Basic Repairs
+
+```bash
+# Sync metadata tables on local node
+garage repair --yes tables
+
+# Repair blocks on all nodes
+garage repair --yes --all-nodes blocks
+
+# Clean up versions on all nodes
+garage repair --yes --all-nodes versions
+```
+
+### After Layout Changes
+
+When you add or remove nodes:
+
+```bash
+# 1. Apply layout changes
+garage layout apply --version 2
+
+# 2. Repair blocks to trigger rebalancing
+garage repair --yes --all-nodes blocks
+
+# 3. Monitor progress
+garage stats
+```
+
+### After Node Failure
+
+When a node comes back online:
+
+```bash
+# 1. Sync metadata
+garage repair --yes --all-nodes tables
+
+# 2. Repair block distribution
+garage repair --yes --all-nodes blocks
+
+# 3. Fix references
+garage repair --yes --all-nodes block-refs
+```
+
+### Complete Cluster Health Check
+
+Periodic maintenance routine:
+
+```bash
+# 1. Sync metadata
+garage repair --yes --all-nodes tables
+
+# 2. Repair block distribution
+garage repair --yes --all-nodes blocks
+
+# 3. Clean up versions and references
+garage repair --yes --all-nodes versions
+garage repair --yes --all-nodes block-refs
+
+# 4. Verify block integrity (long-running)
+garage repair --yes --all-nodes scrub start
+```
+
+### Fixing Stuck Resync Queue
+
+```bash
+# 1. Clear the queue
+garage repair --yes clear-resync-queue
+
+# 2. Immediately run blocks repair
+garage repair --yes --all-nodes blocks
+```
+
+### Reclaim Storage Space
+
+When deleted objects aren't freeing space:
+
+```bash
+# 1. Propagate deletions
+garage repair --yes --all-nodes versions
+garage repair --yes --all-nodes mpu
+
+# 2. Update block references
+garage repair --yes --all-nodes block-refs
+
+# 3. Recalculate reference counts
+garage repair --yes --all-nodes block-rc
+
+# 4. Trigger garbage collection
+garage repair --yes --all-nodes blocks
+```
+
+### Scrub Operations
+
+```bash
+# Start block integrity check
+garage repair --yes --all-nodes scrub start
+
+# Check scrub status
+garage stats
+
+# Pause scrub (e.g., for heavy workload period)
+garage repair --yes scrub pause
+
+# Resume later
+garage repair --yes scrub resume
+
+# Cancel if needed
+garage repair --yes scrub cancel
+```
+
+### After Adding Data Directories
+
+```bash
+# Rebalance data across directories
+garage repair --yes rebalance
+```
+
+## Monitoring Repair Progress
+
+Use these commands to monitor repair operations:
+
+```bash
+# View worker status
+garage worker list
+
+# View node statistics
+garage stats
+
+# View worker details
+garage worker info <worker-tid>
+```
+
+Example output:
+```bash
+$ garage worker list
+Worker TID  Name                    Status  Progress
+1234        Metadata sync           Running 45%
+5678        Block resync            Idle    -
+9012        Garbage collector       Running 12%
+```
+
+## Performance Considerations
+
+### Impact on Cluster
+
+Repair operations can be intensive:
+
+- **CPU**: Metadata operations use CPU for checksums and comparisons
+- **Disk I/O**: Block operations read and write significant data
+- **Network**: Replication operations transfer data between nodes
+- **Latency**: Heavy repairs may impact request latency
+
+### Best Practices
+
+#### Schedule During Low Traffic
+
+```bash
+# Add to cron for off-peak hours
+0 2 * * * garage repair --yes --all-nodes blocks
+```
+
+#### Run on Local Node First
+
+```bash
+# Test on one node
+garage repair --yes tables
+
+# If successful, run cluster-wide
+garage repair --yes --all-nodes tables
+```
+
+#### Use Scrub Carefully
+
+```bash
+# Scrub is I/O intensive - pause if needed
+garage repair --yes scrub start
+# ... during heavy load ...
+garage repair --yes scrub pause
+# ... after load decreases ...
+garage repair --yes scrub resume
+```
+
+## Common Repair Scenarios
+
+### Scenario 1: After Network Partition
+
+```bash
+# Resync metadata after split-brain
+garage repair --yes --all-nodes tables
+garage repair --yes --all-nodes blocks
+```
+
+### Scenario 2: Deleted Objects Still Visible
+
+```bash
+# Fix version and reference tables
+garage repair --yes --all-nodes versions
+garage repair --yes --all-nodes block-refs
+```
+
+### Scenario 3: Storage Not Being Freed
+
+```bash
+# Complete cleanup sequence
+garage repair --yes --all-nodes versions
+garage repair --yes --all-nodes block-refs
+garage repair --yes --all-nodes block-rc
+garage repair --yes --all-nodes blocks
+```
+
+### Scenario 4: Corrupted Blocks Detected
+
+```bash
+# Run scrub to find corrupted blocks
+garage repair --yes --all-nodes scrub start
+
+# Review logs for errors
+journalctl -u garage | grep -i corrupt
+
+# Repair block distribution
+garage repair --yes --all-nodes blocks
+```
+
+### Scenario 5: New Node Added to Cluster
+
+```bash
+# After layout apply
+garage layout apply --version X
+
+# Trigger data migration
+garage repair --yes --all-nodes blocks
+
+# Monitor progress
+garage layout history
+```
+
+## Troubleshooting
+
+### Repair Operation Fails
+
+Check logs for errors:
+```bash
+journalctl -u garage -n 100
+```
+
+Common issues:
+- Network connectivity between nodes
+- Disk space exhaustion
+- Corrupted metadata database
+
+### Repair Takes Too Long
+
+Large clusters or datasets can take hours:
+
+```bash
+# Check progress
+garage worker list
+
+# View detailed stats
+garage stats --all-nodes
+```
+
+Consider:
+- Running repairs during maintenance windows
+- Upgrading hardware (disk I/O, network)
+- Running on subsets of nodes
+
+### Repeated Repair Needed
+
+If repairs don't stick:
+
+1. Check for underlying issues:
+   - Disk errors
+   - Network problems
+   - Node failures
+
+2. Run comprehensive repair:
+   ```bash
+   garage repair --yes --all-nodes tables
+   garage repair --yes --all-nodes blocks
+   garage repair --yes --all-nodes versions
+   garage repair --yes --all-nodes block-refs
+   garage repair --yes --all-nodes block-rc
+   ```
+
+## Maintenance Schedule
+
+### Daily
+
+```bash
+# Quick metadata sync
+garage repair --yes --all-nodes tables
+```
+
+### Weekly
+
+```bash
+# Block distribution check
+garage repair --yes --all-nodes blocks
+garage repair --yes --all-nodes versions
+```
+
+### Monthly
+
+```bash
+# Comprehensive repair
+garage repair --yes --all-nodes tables
+garage repair --yes --all-nodes blocks
+garage repair --yes --all-nodes versions
+garage repair --yes --all-nodes block-refs
+garage repair --yes --all-nodes block-rc
+
+# Start scrub (runs in background)
+garage repair --yes --all-nodes scrub start
+```
+
+### Example Cron Jobs
+
+```bash
+# /etc/cron.d/garage-repair
+
+# Daily metadata sync at 2 AM
+0 2 * * * garage garage repair --yes --all-nodes tables
+
+# Weekly block repair on Sundays at 3 AM
+0 3 * * 0 garage garage repair --yes --all-nodes blocks
+
+# Monthly comprehensive repair on 1st at 4 AM
+0 4 1 * * garage garage repair --yes --all-nodes versions && \
+              garage repair --yes --all-nodes block-refs && \
+              garage repair --yes --all-nodes block-rc
+
+# Monthly scrub on 1st at 5 AM
+0 5 1 * * garage garage repair --yes --all-nodes scrub start
+```

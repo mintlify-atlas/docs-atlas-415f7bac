@@ -1,0 +1,412 @@
+---
+title: 'S3 CLI Tools'
+description: 'Connect S3 CLI tools like awscli, s3cmd, rclone, and more to Garage'
+---
+
+Garage is compatible with a wide range of S3 CLI tools, making it easy to manage your object storage through the command line. These tools are particularly suitable for debugging, backups, website deployments, or any scripted task that needs to handle data.
+
+## Recommended Tools
+
+The following tools are tested and work reliably with Garage:
+
+| Tool | Status | Notes |
+|------|--------|-------|
+| AWS CLI | ✅ | Recommended, native S3 support |
+| Minio Client | ✅ | Recommended, user-friendly |
+| rclone | ✅ | Excellent for sync operations |
+| s3cmd | ✅ | Classic S3 tool |
+| s5cmd | ✅ | High-performance tool |
+| Cyberduck/duck | ✅ | GUI and CLI options |
+| WinSCP | ✅ | Windows support |
+| sftpgo | ✅ | SFTP gateway to S3 |
+
+## AWS CLI
+
+The AWS CLI is one of the most widely used tools for interacting with S3-compatible storage.
+
+### Configuration
+
+Create a credentials file at `~/.aws/credentials`:
+
+```toml
+[default]
+aws_access_key_id=GKxxxx
+aws_secret_access_key=xxxx
+```
+
+Then create a config file at `~/.aws/config`:
+
+```toml
+[default]
+region=garage
+endpoint_url=http://127.0.0.1:3900
+```
+
+<Note>
+If you're using awscli version `<1.29.0` or `<2.13.0`, you need to pass `--endpoint-url` to each CLI invocation explicitly. See the workaround below.
+</Note>
+
+### Workaround for Older Versions
+
+For older AWS CLI versions, add this to your `~/.bashrc`:
+
+```bash
+function aws { command aws --endpoint-url http://127.0.0.1:3900 $@ ; }
+```
+
+Don't forget to run `source ~/.bashrc` or start a new terminal.
+
+### Common Operations
+
+<Tabs>
+  <Tab title="List Buckets">
+    ```bash
+    aws s3 ls
+    ```
+  </Tab>
+  <Tab title="List Objects">
+    ```bash
+    aws s3 ls s3://my-bucket
+    ```
+  </Tab>
+  <Tab title="Upload File">
+    ```bash
+    aws s3 cp /path/to/file.txt s3://my-bucket/
+    ```
+  </Tab>
+  <Tab title="Download File">
+    ```bash
+    aws s3 cp s3://my-bucket/file.txt /tmp/
+    ```
+  </Tab>
+  <Tab title="Sync Directory">
+    ```bash
+    aws s3 sync ./local-dir s3://my-bucket/remote-dir
+    ```
+  </Tab>
+</Tabs>
+
+## Minio Client
+
+The Minio client (`mc`) provides a modern, user-friendly interface for S3 operations.
+
+<Note>
+On some Linux distributions like Arch Linux, the Minio client is called `mcli` to avoid conflicts with Midnight Commander.
+</Note>
+
+### Setup
+
+Define a new S3 server alias:
+
+```bash
+mc alias set \
+  garage \
+  http://127.0.0.1:3900 \
+  GKxxxx \
+  your-secret-key \
+  --api S3v4
+```
+
+### Common Operations
+
+<Tabs>
+  <Tab title="List Buckets">
+    ```bash
+    mc ls garage/
+    ```
+  </Tab>
+  <Tab title="List Objects">
+    ```bash
+    mc ls garage/my-bucket
+    ```
+  </Tab>
+  <Tab title="Upload File">
+    ```bash
+    mc cp /proc/cpuinfo garage/my-bucket/cpuinfo.txt
+    ```
+  </Tab>
+  <Tab title="Download File">
+    ```bash
+    mc cp garage/my-bucket/cpuinfo.txt /tmp/
+    ```
+  </Tab>
+  <Tab title="Mirror Directory">
+    ```bash
+    mc mirror --overwrite ./local-dir garage/my-bucket
+    ```
+  </Tab>
+</Tabs>
+
+## rclone
+
+rclone is excellent for synchronizing files between different storage systems.
+
+### Configuration
+
+You can configure rclone interactively:
+
+```bash
+rclone config
+```
+
+Or create a configuration file directly at `~/.config/rclone/rclone.conf`:
+
+```ini
+[garage]
+type = s3
+provider = Other
+env_auth = false
+access_key_id = GKxxxx
+secret_access_key = your-secret-key
+region = garage
+endpoint = http://127.0.0.1:3900
+force_path_style = true
+acl = private
+bucket_acl = private
+```
+
+### Common Operations
+
+<Tabs>
+  <Tab title="List Buckets">
+    ```bash
+    rclone lsd garage:
+    ```
+  </Tab>
+  <Tab title="List Objects">
+    ```bash
+    rclone lsd garage:my-bucket
+    ```
+  </Tab>
+  <Tab title="Copy File">
+    ```bash
+    echo "hello world" > /tmp/hello.txt
+    rclone copy /tmp/hello.txt garage:my-bucket/
+    ```
+  </Tab>
+  <Tab title="Sync Directory">
+    ```bash
+    rclone sync ./local-dir garage:my-bucket/remote-dir
+    ```
+  </Tab>
+</Tabs>
+
+### Performance Tips
+
+<Tip>
+Use the `--fast-list` option when accessing buckets with large amounts of objects. This will tremendously accelerate operations like `rclone sync` or `rclone ncdu` by reducing the number of ListObjects calls.
+</Tip>
+
+### Cloudflare Proxy Compatibility
+
+If you're running Garage behind a Cloudflare proxy and see `AccessDenied: Forbidden: Invalid signature` errors, add this flag:
+
+```bash
+rclone lsd --s3-sign-accept-encoding=false garage:
+```
+
+## s3cmd
+
+s3cmd is a classic command-line tool for S3 operations.
+
+### Configuration
+
+Create a configuration file at `~/.s3cfg` or `s3cmd.cfg`:
+
+```ini
+[default]
+access_key = GKxxxx
+secret_key = your-secret-key
+host_base = 127.0.0.1:3900
+host_bucket = 127.0.0.1:3900
+use_https = False
+```
+
+### Common Operations
+
+<Tabs>
+  <Tab title="List Buckets">
+    ```bash
+    s3cmd ls
+    ```
+  </Tab>
+  <Tab title="List Objects">
+    ```bash
+    s3cmd ls s3://my-bucket
+    ```
+  </Tab>
+  <Tab title="Upload File">
+    ```bash
+    echo "hello world" > /tmp/hello.txt
+    s3cmd put /tmp/hello.txt s3://my-bucket/
+    ```
+  </Tab>
+  <Tab title="Download File">
+    ```bash
+    s3cmd get s3://my-bucket/hello.txt hello.txt
+    ```
+  </Tab>
+</Tabs>
+
+## s5cmd
+
+s5cmd is a high-performance S3 tool with parallel operations support.
+
+### Configuration
+
+Set up environment variables:
+
+```bash
+export AWS_ACCESS_KEY_ID=GKxxxx
+export AWS_SECRET_ACCESS_KEY=your-secret-key
+export AWS_DEFAULT_REGION=garage
+export AWS_ENDPOINT=http://localhost:3900
+```
+
+### Usage
+
+```bash
+s5cmd --endpoint-url=$AWS_ENDPOINT ls
+```
+
+See the [s5cmd documentation](https://github.com/peak/s5cmd) for more commands.
+
+## Cyberduck & duck
+
+Cyberduck provides both a GUI application and a CLI tool called `duck`.
+
+### GUI Setup
+
+Within Cyberduck, a [Garage connection profile](https://docs.cyberduck.io/protocols/s3/garage/) is available in `Preferences → Profiles`. Enable this profile to configure connections to Garage.
+
+### CLI Setup
+
+Create the folder hierarchy:
+
+```bash
+mkdir -p ~/.duck/profiles/
+```
+
+Download the Garage connection profile and save it to `~/.duck/profiles/garage.cyberduckprofile`.
+
+Set your credentials in `~/.duck/credentials`:
+
+```bash
+export AWS_ACCESS_KEY_ID="GKxxxx"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export HOST="s3.garage.localhost"
+export PORT="3900"
+export PROTOCOL="http"
+
+cat > ~/.duck/credentials <<EOF
+$PROTOCOL\://$AWS_ACCESS_KEY_ID@$HOST\:$PORT=$AWS_SECRET_ACCESS_KEY
+EOF
+```
+
+Optionally, add a wrapper to your `~/.bashrc`:
+
+```bash
+function duck { command duck --username GKxxxx $@ ; }
+```
+
+### Common Operations
+
+<Tabs>
+  <Tab title="List Buckets">
+    ```bash
+    duck --list garage:/
+    ```
+  </Tab>
+  <Tab title="List Objects">
+    ```bash
+    duck --list garage:/my-bucket/
+    ```
+  </Tab>
+  <Tab title="Download File">
+    ```bash
+    duck --download garage:/my-bucket/file.txt /tmp/
+    ```
+  </Tab>
+  <Tab title="Upload File">
+    ```bash
+    duck --upload /tmp/file.txt garage:/my-bucket/
+    ```
+  </Tab>
+  <Tab title="Delete File">
+    ```bash
+    duck --delete garage:/my-bucket/file.txt
+    ```
+  </Tab>
+</Tabs>
+
+## WinSCP
+
+WinSCP provides both GUI and CLI interfaces for Windows users.
+
+### CLI Usage
+
+```bash
+open s3://GKxxxxx:secret-key@127.0.0.1:3900 -certificate=* -rawsettings S3DefaultRegion=garage S3UrlStyle=1
+ls
+ls my-bucket/
+get my-bucket/file.txt C:\\tmp\\file.txt
+put C:\\tmp\\file.txt my-bucket/another-file.txt
+rm my-bucket/file.txt
+exit
+```
+
+<Note>
+- WinSCP only supports TLS connections for S3
+- Use `-certificate=*` to allow self-signed certificates
+</Note>
+
+## sftpgo
+
+sftpgo provides an SFTP gateway to S3 storage, allowing you to access Garage through SFTP clients.
+
+### Setup
+
+Initialize the database:
+
+```bash
+sftpgo initprovider
+```
+
+Start the daemon (listens on `:8080` for HTTP and `:2022` for SSH by default):
+
+```bash
+sftpgo serve
+```
+
+### Configuration
+
+1. Go to the admin web interface at `http://localhost:8080/web/admin/`
+2. Create the required admin account
+3. Create a user account with these filesystem settings:
+   - **Storage**: AWS S3 (Compatible)
+   - **Bucket**: your bucket name
+   - **Region**: `garage` (or your configured region)
+   - **Access key**: your access key
+   - **Access secret**: your secret key
+   - **Endpoint**: your endpoint (e.g., `https://garage.example.com`)
+   - Tick "Use path-style addressing"
+
+### Access via SFTP
+
+```bash
+sftp -P2022 username@localhost
+ls
+```
+
+You can also access files through the web interface at `http://localhost:8080/web/client`.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Application Integrations" icon="apps" href="/integration/applications">
+    Connect Nextcloud, Mastodon, Peertube, and more
+  </Card>
+  <Card title="Static Website Hosting" icon="browser" href="/integration/websites">
+    Deploy Hugo, Jekyll, and other static sites
+  </Card>
+</CardGroup>

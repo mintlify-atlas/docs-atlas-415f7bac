@@ -1,0 +1,138 @@
+---
+title: Introduction to Garage
+description: Learn about Garage, a lightweight S3-compatible object storage system designed for geo-distributed deployments
+---
+
+## What is Garage?
+
+Garage is a lightweight geo-distributed data store that implements the [Amazon S3](https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html) object storage protocol. It enables you to store large blobs such as pictures, videos, images, documents, and other files in a redundant multi-node setting.
+
+<Note>
+Garage is designed to work everywhere - from large datacenters to home servers connected through regular Internet connections.
+</Note>
+
+## Key Benefits
+
+Garage is an opinionated object storage solution that focuses on the following desirable properties:
+
+### Internet Enabled
+
+Made for multi-site deployments (datacenters, offices, households) interconnected through regular Internet connections. Unlike traditional storage systems that require high-speed local networks, Garage is optimized for the real-world constraints of distributed infrastructure.
+
+### Self-Contained & Lightweight
+
+Works everywhere and integrates well in existing environments to target [hyperconverged infrastructures](https://en.wikipedia.org/wiki/Hyper-converged_infrastructure). Garage does not depend on any external service to run, making it extremely simple to deploy.
+
+### Highly Resilient
+
+Built to be highly resilient to:
+- Network failures and latency
+- Disk failures
+- Power outages
+- Human error
+
+Garage continues to operate even when nodes are temporarily unavailable or when connections between sites are interrupted.
+
+### Simple
+
+Simple to understand, simple to operate, and simple to debug. Garage prioritizes operational simplicity over feature extensiveness.
+
+## When to Use Garage
+
+Garage is ideal for:
+
+- **Multi-site deployments** where you need to replicate data across geographical locations
+- **Self-hosted infrastructure** running on consumer-grade hardware and Internet connections
+- **Static website hosting** with S3-compatible bucket publishing
+- **Application backends** for services like Matrix, Mastodon, PeerTube, and NextCloud
+- **Backup storage** using tools like rclone and restic
+- **Personal cloud storage** through WebDav or SFTP proxies
+
+<Warning>
+Garage may not be the right choice if you need:
+- Extreme performance optimizations
+- Advanced storage features beyond the S3 API
+- Erasure coding or complex storage optimizations
+- POSIX/filesystem compatibility
+</Warning>
+
+## Key Features
+
+### S3 API Compatibility
+
+Garage implements a large subset of the Amazon S3 API, making it compatible with existing S3 clients and tools. You can use standard tools like:
+- AWS CLI
+- rclone
+- s3cmd
+- Minio Client
+- Cyberduck
+- And many more
+
+### Geo-Distributed Replication
+
+Store copies of your data in multiple geographical locations to maximize resilience. Garage exploits knowledge of the capacity and physical location of each storage node to design a storage plan that best utilizes available capacity while satisfying geo-distributed replication constraints.
+
+### Flexible Topology
+
+A Garage cluster can easily evolve over time as storage nodes are added or removed. Garage automatically rebalances data between nodes to ensure the desired number of copies.
+
+### No RAFT Bottleneck
+
+Unlike many distributed systems, Garage does not use RAFT or another consensus algorithm to order incoming requests. This means all requests can be handled independently, resulting in:
+- Much faster request handling
+- Better performance with high latency between nodes
+- No single leader node bottleneck
+
+### Built-in Compression and Deduplication
+
+All data stored in Garage is automatically deduplicated and optionally compressed using Zstd. Objects are chunked into blocks of constant size, and hashes of individual blocks are used to dispatch them to storage nodes and deduplicate them.
+
+### Static Website Hosting
+
+Storage buckets can be directly served as static websites, with domain names mapping directly to bucket names. This makes it easy to build a platform for hosting multiple websites.
+
+### Multiple Bucket Aliases
+
+Buckets can have multiple names (aliases) that can be easily added or removed. This allows:
+- Easy bucket renaming without copying data
+- Serving the same content under different domain names
+- Per-user bucket namespaces to avoid naming collisions
+
+### Administration API
+
+Garage provides a REST API for programmatic cluster administration, including:
+- Setting up and monitoring cluster nodes
+- Managing access credentials
+- Managing storage buckets and aliases
+
+### Monitoring and Observability
+
+- Prometheus-compatible metrics for monitoring cluster health and performance
+- OpenTelemetry trace exports for detailed performance analysis
+- Built-in status commands for quick health checks
+
+## Real-World Usage
+
+Garage is used in production by organizations like:
+
+**Deuxfleurs** (the creators of Garage)
+- 9 nodes across 3 physical locations
+- Hosting websites, Matrix media backend, Nix binary cache, and backups
+
+**Triplebit**
+- 15 storage nodes across 3 physical locations  
+- Hosting static sites, PowerDNS backend, Mastodon media, PeerTube storage, and Matrix media
+
+## Architecture Overview
+
+Garage uses a masterless architecture where:
+- All nodes are equal (no leader election)
+- Data is replicated across multiple nodes based on configurable replication modes
+- Nodes communicate through a gossip protocol to maintain cluster state
+- Objects are automatically chunked, deduplicated, and distributed across the cluster
+
+## Next Steps
+
+<Card title="Quick Start" icon="rocket" href="/quick-start">
+  Get Garage up and running in minutes
+</Card>

@@ -1,0 +1,305 @@
+---
+title: K2V API
+description: Key-Value storage API for efficiently storing small values alongside S3 objects
+---
+
+K2V (Key-Key-Value) is an experimental API designed to efficiently store many small values in Garage buckets, complementing S3's design for large blob storage.
+
+<Warning>
+K2V is an **experimental feature** introduced in Garage v0.7.2. The specification is subject to changes. K2V requires special builds with the `k2v` feature flag enabled.
+</Warning>
+
+## What is K2V?
+
+K2V is an alternative storage API optimized for:
+- **High-volume small values** - Efficiently handle thousands of small key-value pairs
+- **Metadata storage** - Store metadata related to S3 objects
+- **Application state** - Manage application data requiring frequent updates
+- **Bulk operations** - Process many values efficiently in batch
+
+K2V complements S3 rather than replacing it - use S3 for large objects and K2V for associated metadata and small values.
+
+## Key Differences from S3
+
+| Feature | S3 API | K2V API |
+|---------|--------|----------|
+| **Optimized for** | Large blobs (MBs-GBs) | Small values (bytes-KBs) |
+| **Data structure** | Bucket → Key → Object | Bucket → Partition → Sort Key → Value |
+| **Operations** | Individual object ops | Batch operations |
+| **Use case** | File storage | Metadata, indices, state |
+| **Versioning** | Optional | Built-in causality tracking |
+
+## Use Cases
+
+### Aerogramme (Email Storage)
+
+The [Aerogramme](https://aerogramme.deuxfleurs.fr) project uses K2V to store:
+- Email metadata and indices
+- Mailbox state and flags
+- Operation logs
+
+While actual email content and attachments are stored in S3, K2V provides efficient access to frequently-updated metadata.
+
+### Application Metadata
+
+For applications storing files in S3:
+
+```
+S3 Bucket:
+  - user-photos/2024/photo1.jpg (5 MB)
+  - user-photos/2024/photo2.jpg (3 MB)
+
+K2V Bucket:
+  - partition: "user-photos/2024"
+    - sort-key: "photo1.jpg" → {"tags": ["vacation"], "faces": 2}
+    - sort-key: "photo2.jpg" → {"tags": ["family"], "faces": 3}
+```
+
+This enables fast metadata queries without downloading large S3 objects.
+
+### Database Indices
+
+Build secondary indices for S3 objects:
+
+```
+K2V partition: "index-by-date"
+  - "2024-01-15" → ["obj1", "obj2", "obj3"]
+  - "2024-01-16" → ["obj4", "obj5"]
+
+K2V partition: "index-by-tag"
+  - "important" → ["obj1", "obj4"]
+  - "archived" → ["obj2", "obj3", "obj5"]
+```
+
+## Getting K2V
+
+### Download Pre-built Binaries
+
+K2V-enabled builds are available on the [Garage download page](https://garagehq.deuxfleurs.fr/download/) under "Extra builds". These builds have tags ending with `-k2v` (e.g., `v0.9.0-k2v`).
+
+### Build from Source
+
+Enable the `k2v` feature flag when building:
+
+```bash
+git clone https://git.deuxfleurs.fr/Deuxfleurs/garage.git
+cd garage
+cargo build --release --features k2v
+```
+
+The compiled binary will support both S3 and K2V APIs.
+
+## Configuration
+
+### Enable K2V API
+
+Add a `[k2v_api]` section to your `garage.toml`:
+
+```toml
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+
+replication_factor = 3
+rpc_secret = "your-rpc-secret"
+
+# S3 API configuration
+[s3_api]
+api_bind_addr = "[::]:3900"
+s3_region = "garage"
+
+# K2V API configuration
+[k2v_api]
+api_bind_addr = "[::]:3902"
+```
+
+**Important considerations:**
+- Choose a port not used by S3 API (3900), admin API (3903), or RPC (3901)
+- K2V API does not provide TLS - use a reverse proxy for production
+- All cluster nodes must use K2V-enabled builds
+
+### Restart Garage
+
+After configuration:
+
+```bash
+sudo systemctl restart garage
+
+# Verify K2V endpoint is listening
+ss -tlnp | grep 3902
+```
+
+## Authentication
+
+K2V uses the same AWS Signature Version 4 (AWSv4) authentication as S3:
+- Same access keys and secret keys
+- Same AWS region (defined in `s3_region` config)
+- Same bucket-level permissions
+
+If an access key can access an S3 bucket, it can also access the corresponding K2V bucket.
+
+## Using the K2V API
+
+### K2V Client Library (Rust)
+
+Garage provides an official Rust client library:
+
+**Cargo.toml:**
+```toml
+[dependencies]
+k2v-client = { git = "https://git.deuxfleurs.fr/Deuxfleurs/garage.git" }
+```
+
+**Example usage:**
+```rust
+use k2v_client::K2vClient;
+
+#[tokio::main]
+async fn main() {
+    let client = K2vClient::new(
+        "garage",
+        "http://localhost:3902",
+        "access_key",
+        "secret_key",
+    ).unwrap();
+
+    // Insert a value
+    client.insert_item(
+        "my-bucket",
+        "partition1",
+        "sort-key1",
+        b"value data",
+        None,
+    ).await.unwrap();
+
+    // Read a value
+    let value = client.read_item(
+        "my-bucket",
+        "partition1",
+        "sort-key1",
+    ).await.unwrap();
+
+    println!("Value: {:?}", value);
+}
+```
+
+### K2V CLI Tool
+
+Build the CLI tool from source:
+
+```bash
+git clone https://git.deuxfleurs.fr/Deuxfleurs/garage.git
+cd garage/src/k2v-client
+cargo build --release --features cli --bin k2v-cli
+```
+
+**Example commands:**
+```bash
+# Insert a value
+./k2v-cli insert --bucket my-bucket --partition part1 --sort-key key1 --value "data"
+
+# Read a value
+./k2v-cli read --bucket my-bucket --partition part1 --sort-key key1
+
+# List items in a partition
+./k2v-cli list --bucket my-bucket --partition part1
+
+# Delete a value
+./k2v-cli delete --bucket my-bucket --partition part1 --sort-key key1
+```
+
+Run `k2v-cli --help` for complete documentation.
+
+## API Specification
+
+The complete K2V API specification is available in the Garage repository:
+- [K2V Specification](https://git.deuxfleurs.fr/Deuxfleurs/garage/src/commit/f8be15c37db857e177d543de7be863692628d567/doc/drafts/k2v-spec.md)
+
+The specification includes:
+- Data model and semantics
+- HTTP API endpoints
+- Causality tracking and conflict resolution
+- Batch operations
+- Performance characteristics
+
+## Data Model
+
+### Structure
+
+```
+Bucket
+└── Partition Key (string)
+    └── Sort Key (string)
+        └── Value (bytes) + Causality Token
+```
+
+**Partition Key**: Groups related items together (like a directory)
+**Sort Key**: Unique identifier within a partition (like a filename)
+**Value**: The actual data stored (arbitrary bytes)
+**Causality Token**: Tracks versions to prevent conflicts
+
+### Example Structure
+
+```
+Bucket: "user-data"
+├── Partition: "user-123"
+│   ├── Sort: "profile.json" → {"name": "Alice"}
+│   ├── Sort: "settings.json" → {"theme": "dark"}
+│   └── Sort: "last-login" → "2024-03-04T10:00:00Z"
+└── Partition: "user-456"
+    ├── Sort: "profile.json" → {"name": "Bob"}
+    └── Sort: "settings.json" → {"theme": "light"}
+```
+
+## Performance Considerations
+
+### When to Use K2V
+
+**Good use cases:**
+- Storing thousands of small configuration values
+- Frequently updated metadata
+- Application indices and catalogs
+- Session state and temporary data
+- Batch operations on many small items
+
+**Poor use cases:**
+- Large binary files (use S3 instead)
+- Single large values (use S3 instead)
+- Infrequent access to large objects
+
+### Optimization Tips
+
+1. **Partition wisely** - Group related data in the same partition for efficient batch operations
+2. **Small values** - Keep values under a few KB for best performance
+3. **Batch operations** - Use batch APIs when operating on multiple items
+4. **Causality tokens** - Use them properly to avoid conflicts in concurrent updates
+
+## Limitations and Caveats
+
+<Warning>
+**Experimental Status**: K2V API may change in future versions. Monitor the Garage release notes for updates.
+</Warning>
+
+- **Build requirement**: Standard Garage builds don't include K2V
+- **No versioning UI**: Unlike S3, no web interface for K2V data
+- **Limited tooling**: Fewer third-party tools compared to S3
+- **Specification changes**: API may evolve before stabilization
+
+## Migration and Compatibility
+
+K2V data is stored separately from S3 data:
+- Disabling K2V doesn't affect S3 buckets
+- K2V and S3 can use the same bucket names (separate namespaces)
+- Switching from K2V build to standard build disables K2V API but preserves data
+
+## Future Development
+
+K2V is part of ongoing research into distributed storage systems. Community feedback is valuable:
+- Report bugs and issues on the [Garage repository](https://git.deuxfleurs.fr/Deuxfleurs/garage)
+- Discuss use cases on community channels
+- Contribute improvements and documentation
+
+The Garage team is particularly interested in:
+- Real-world use cases and performance data
+- Integration patterns with S3
+- API improvements and ergonomics

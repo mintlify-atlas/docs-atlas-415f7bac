@@ -1,0 +1,207 @@
+---
+title: 'Managing Cluster Layout'
+description: 'Learn how to manage cluster layouts, assign node roles, and understand partition distribution in Garage'
+---
+
+The cluster layout in Garage is a table that assigns to each node a role in the cluster. The role of a node in Garage can either be a storage node with a certain capacity, or a gateway node that does not store data and is only used as an API entry point for faster cluster access.
+
+## How Cluster Layouts Work
+
+A cluster layout is composed of the following components:
+
+- A table of roles assigned to nodes, defined by the user
+- An optimal assignation of partitions to nodes, computed by an algorithm that runs when calling `garage layout apply`
+- A version number
+
+Garage nodes will always use the cluster layout with the highest version number.
+
+In Garage, all data that can be stored in a cluster is divided into slices called **partitions**. Each partition is stored by one or several nodes in the cluster (based on the replication factor). The layout determines the correspondence between these logical partitions and actual storage nodes.
+
+## Managing Layout Changes
+
+### Viewing the Current Layout
+
+To inspect the current layout and any proposed changes:
+
+```bash
+garage layout show
+```
+
+This displays:
+- Current cluster layout with node capacities and zone information
+- Staged role changes (if any)
+- Preview of the new layout after applying changes
+- Partition distribution statistics
+
+### Assigning Node Roles
+
+To add or modify a node's role in the cluster:
+
+```bash
+garage layout assign <node_id> \
+  --zone <zone_name> \
+  --capacity <capacity> \
+  --tag <optional_tag>
+```
+
+**Parameters:**
+- `node_id`: Node identifier (prefix of hexadecimal node ID)
+- `-z, --zone`: Location or datacenter of the node
+- `-c, --capacity`: Storage capacity (e.g., `100GB`, `2TB`)
+- `-t, --tag`: Optional tags for organization
+- `-g, --gateway`: Mark as gateway-only node (no data storage)
+
+**Example:**
+```bash
+garage layout assign a11c7cf18af29737 \
+  --zone dc1 \
+  --capacity 500GB \
+  --tag node1
+```
+
+### Removing Nodes
+
+To remove a node from the cluster:
+
+```bash
+garage layout remove <node_id>
+```
+
+### Replacing Failed Nodes
+
+When replacing a failed node, you can directly substitute it:
+
+```bash
+garage layout assign <new_node_id> \
+  --replace <old_node_id> \
+  --zone <zone> \
+  --capacity <capacity>
+```
+
+### Applying Layout Changes
+
+The commands above only stage changes. To apply them:
+
+```bash
+garage layout apply --version <new_version>
+```
+
+The version number must be exactly 1 + the previous layout version. You can view the required version with `garage layout show`.
+
+### Reverting Staged Changes
+
+To cancel staged changes without applying them:
+
+```bash
+garage layout revert --yes
+```
+
+## Critical Warnings
+
+<Warning>
+**Never make multiple calls to `garage layout apply` or `garage layout revert` with the same version number.** This can create multiple different layouts with the same version number, causing cluster inconsistency.
+</Warning>
+
+<Warning>
+If using scripts to automate layout changes:
+- Make all CLI calls to the same RPC host
+- Call `garage layout apply` **only once**, strictly after all assign/remove commands complete
+- Wait for each command to return before proceeding to the next
+</Warning>
+
+## Understanding Layout Calculations
+
+The layout algorithm prioritizes:
+1. **Minimizing data movement** between nodes over equal distribution
+2. **Using all links equally** between node pairs when moving data
+
+### Example 1: Adding a Node to an Existing Zone
+
+When adding a fourth node to a 3-node cluster (3 zones, equal capacity):
+
+```bash
+$ garage layout show
+==== CURRENT CLUSTER LAYOUT ====
+ID                Tags   Zone  Capacity   Usable capacity
+b10c110e4e854e5a  node1  dc1   1000.0 MB  1000.0 MB (100.0%)
+a235ac7695e0c54d  node2  dc2   1000.0 MB  1000.0 MB (100.0%)
+62b218d848e86a64  node3  dc3   1000.0 MB  1000.0 MB (100.0%)
+
+==== NEW CLUSTER LAYOUT AFTER APPLYING CHANGES ====
+ID                Tags   Zone  Capacity   Usable capacity
+b10c110e4e854e5a  node1  dc1   1000.0 MB  1000.0 MB (100.0%)
+a11c7cf18af29737  node4  dc1   1000.0 MB  0 B (0.0%)
+a235ac7695e0c54d  node2  dc2   1000.0 MB  1000.0 MB (100.0%)
+62b218d848e86a64  node3  dc3   1000.0 MB  1000.0 MB (100.0%)
+```
+
+**Why is node4 at 0%?**
+- The other two zones (dc2, dc3) must still store a full copy of all data
+- Adding capacity to dc1 doesn't increase total cluster capacity
+- No data movement is needed
+
+**Solution:** If you want to split load between nodes in dc1, assign each node half the capacity:
+
+```bash
+garage layout assign node1 -z dc1 -c 500MB
+garage layout assign node4 -z dc1 -c 500MB
+```
+
+### Example 2: Moving a Node Between Zones
+
+When moving a node from a zone with 2 nodes to a zone with 1 node, data will be redistributed proportionally from all possible sources.
+
+<Note>
+Garage uses all node-to-node links in equal proportions when transferring data. This may result in unexpected but optimal distributions.
+</Note>
+
+## Advanced Configuration
+
+### Zone Redundancy
+
+Configure how data is distributed across zones:
+
+```bash
+garage layout config --redundancy <value>
+```
+
+Options:
+- `none`: No zone redundancy requirement
+- `max`: Maximum zone redundancy (recommended)
+- Integer: Specific number of zones
+
+### Layout History
+
+View the history of layout changes:
+
+```bash
+garage layout history
+```
+
+### Skipping Dead Nodes
+
+If nodes are permanently offline and preventing layout synchronization:
+
+```bash
+garage layout skip-dead-nodes --version <current_version>
+```
+
+<Warning>
+Use `--allow-missing-data` flag only if you accept potential data loss from the dead nodes.
+</Warning>
+
+## Best Practices
+
+1. **Always review changes** with `garage layout show` before applying
+2. **Test layout changes** in a staging environment first
+3. **Document your topology** with meaningful zone names and node tags
+4. **Plan capacity** based on your replication factor and zone distribution
+5. **Monitor partition distribution** to ensure balanced load
+6. **Avoid frequent layout changes** - let data stabilize between changes
+
+## See Also
+
+- [Production Deployment Guide](/deployment/multi-node)
+- [Configuration Reference](/cli/configuration)
+- [Upgrading Garage](/operations/upgrading)
+- [Disaster Recovery](/operations/recovering)

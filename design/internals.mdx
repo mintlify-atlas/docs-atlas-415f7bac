@@ -1,0 +1,212 @@
+---
+title: "Internal Architecture"
+description: "Deep dive into Garage's internal design and data management"
+icon: "gears"
+---
+
+This page explores how Garage manages data internally, covering the distributed systems concepts and design decisions that power its architecture.
+
+## Core concepts
+
+Garage's architecture is built on proven distributed systems research:
+
+<CardGroup cols={2}>
+  <Card title="Dynamo ring" icon="ring">
+    Consistent hashing ring for data distribution ([paper](https://dl.acm.org/doi/abs/10.1145/1323293.1294281))
+  </Card>
+  
+  <Card title="CRDTs" icon="merge">
+    Conflict-free Replicated Data Types for eventual consistency ([paper](https://link.springer.com/chapter/10.1007/978-3-642-24550-3_29))
+  </Card>
+  
+  <Card title="Quorum consensus" icon="users">
+    Majority-based consistency without leader election
+  </Card>
+  
+  <Card title="Gossip protocol" icon="comments">
+    Decentralized cluster membership and failure detection
+  </Card>
+</CardGroup>
+
+<Tip>
+  For more background, see [this presentation (French)](https://git.deuxfleurs.fr/Deuxfleurs/garage/src/branch/main/doc/talks/2020-12-02_wide-team/talk.pdf).
+</Tip>
+
+## Request routing logic
+
+Data retrieval requests to Garage endpoints (S3 API and websites) are resolved to an individual object in a bucket. Since objects are replicated to multiple nodes, Garage must ensure consistency before answering requests.
+
+### Using quorum to ensure consistency
+
+Garage ensures consistency by attempting to establish a quorum with the data nodes responsible for the object. When a majority of data nodes have provided metadata on an object, Garage can answer the request.
+
+<Steps>
+  <Step title="Request arrives">
+    A client makes a request for an object in a bucket
+  </Step>
+  
+  <Step title="Query preferred nodes">
+    Assuming 3 replicas (recommended), make requests to the two preferred nodes for object metadata
+  </Step>
+  
+  <Step title="Try backup node">
+    If one of the two initial requests fails, try the third node
+  </Step>
+  
+  <Step title="Establish quorum">
+    Check that metadata from at least 2 nodes match
+  </Step>
+  
+  <Step title="Verify not deleted">
+    Check that the object hasn't been marked deleted
+  </Step>
+  
+  <Step title="Return data">
+    - If object is small enough: Answer with inline data from metadata
+    - Otherwise: Get data blocks from preferred nodes and answer with assembled object
+  </Step>
+</Steps>
+
+<Info>
+  Garage dynamically determines which nodes to query based on health, preference, and which nodes actually host the data.
+</Info>
+
+### No primary concept
+
+Garage has no concept of "primary" nodes. Any healthy node with the data can be used as long as a quorum is reached for the metadata.
+
+**Benefits:**
+- Better load distribution
+- No single point of failure
+- Faster responses (use closest/fastest node)
+
+## Node management
+
+### Node health monitoring
+
+Garage maintains cluster health through active monitoring:
+
+1. **TCP session management**: Keeps a TCP session open to each node
+2. **Periodic pinging**: Regularly pings all nodes to verify connectivity
+3. **Failure detection**: Marks nodes as failed if:
+   - Connection cannot be established
+   - Node fails to answer multiple pings
+4. **Routing decisions**: Failed nodes are not used for quorum or internal requests
+
+### Node preference
+
+Garage prioritizes which nodes to query according to specific criteria:
+
+<Steps>
+  <Step title="Self-preference">
+    A node always prefers itself if it can answer the request
+  </Step>
+  
+  <Step title="Same-zone preference">
+    The node prioritizes nodes in the same zone
+  </Step>
+  
+  <Step title="Latency optimization">
+    Finally, nodes with the lowest latency are prioritized
+  </Step>
+</Steps>
+
+<Tip>
+  This preference system ensures optimal performance while respecting geographical constraints.
+</Tip>
+
+## Garbage collection
+
+Garbage collection is critical for maintaining data integrity. A faulty procedure was the cause of [critical bug #39](https://git.deuxfleurs.fr/Deuxfleurs/garage/issues/39), leading to significant improvements in [PR #135](https://git.deuxfleurs.fr/Deuxfleurs/garage/pulls/135).
+
+<Warning>
+  Rationale: We must ensure Garage's safety by preventing premature deletion of needed data.
+</Warning>
+
+### Table entry garbage collection
+
+The `Entry` trait for table entries defines an `is_tombstone()` function that returns `true` for deleted entries.
+
+**CRDT semantics and tombstones:**
+
+CRDT semantics keep all tombstones by default because they're necessary for reconciliation:
+
+- If node A has a tombstone superseding value `x`
+- And node B has value `x`
+- Node A must keep the tombstone to properly delete `x` at node B
+- Otherwise, value `x` would flow back from B to A (deleted item reappears)
+
+**Safe tombstone deletion:**
+
+The garbage collector (implemented in `table/gc.rs`) can delete tombstones UNDER CERTAIN CONDITIONS:
+
+<Check>
+  All nodes responsible for storing this entry are aware of the tombstone's existence, ensuring they cannot hold a superseded version.
+</Check>
+
+Garage uses atomic database operations (compare-and-swap and transactions) to ensure only properly propagated tombstones are deleted.
+
+### Data block garbage collection
+
+Blocks in the data directory are reference-counted.
+
+**Safety measures (introduced in PR #135):**
+
+<CardGroup cols={2}>
+  <Card title="Tombstone delay" icon="clock">
+    24-hour delay before anything is garbage collected in a table
+  </Card>
+  
+  <Card title="Block deletion delay" icon="timer">
+    10-minute interval after RC reaches zero before blocks can be deleted
+  </Card>
+</CardGroup>
+
+**Why 10 minutes for blocks?**
+
+This is a compromise between:
+- **Security**: Prevents race conditions like bug #39
+- **Practicality**: Avoids disk space explosion during rebalancing (which would occur with a 24-hour delay)
+
+### Rebalancing considerations
+
+<Warning>
+  When a partition is moving between nodes during rebalancing, the offload process takes time.
+</Warning>
+
+**The challenge:**
+
+During the offload interval, the GC doesn't check with the offloading node before deleting tombstones. If that node hasn't received the tombstone before offload completes, old data could reappear.
+
+**Current solution:**
+
+The 24-hour delay works under the assumption that rebalances complete within 24 hours.
+
+**Future improvements:**
+
+In distributed systems, time-based assumptions are generally considered bad practice (synchrony assumptions). To maximize Garage's applicability, we'd like to:
+
+1. Find a way to safely disable GC during data shuffling
+2. Safely detect when shuffling has terminated
+3. Resume GC after completion
+
+This introduces protocol complexity and hasn't been tackled yet.
+
+## Consistency model
+
+Garage uses **eventual consistency** with quorum-based operations:
+
+- **Writes**: Succeed when acknowledged by a majority of replicas
+- **Reads**: Return data when a majority of replicas agree on object state
+- **Conflicts**: Resolved through CRDT merge semantics
+- **Tombstones**: Maintained until safe to delete
+
+<Info>
+  This model prioritizes availability and partition tolerance over strong consistency (AP in CAP theorem).
+</Info>
+
+## Further reading
+
+- [Gateway configuration](/cookbook/gateways) - Learn about gateway node deployment
+- [Cluster layout management](/operations/layout) - Understand cluster topology configuration
+- [Old design draft](/working-documents/design-draft) - Historical design documentation

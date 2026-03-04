@@ -1,0 +1,483 @@
+---
+title: "Kubernetes Deployment"
+description: "Deploy Garage on Kubernetes using Helm or manual configurations"
+---
+
+Garage can be deployed on Kubernetes using Helm charts or manual YAML configurations. This guide covers both methods and best practices for running Garage in Kubernetes.
+
+## Overview
+
+Kubernetes deployment of Garage provides:
+
+- Automated pod management and scheduling
+- Persistent volume management
+- Service discovery using Kubernetes API
+- Integration with Kubernetes networking and ingress
+
+## Method 1: Helm Chart Deployment
+
+The recommended way to deploy Garage on Kubernetes is using the official Helm chart.
+
+<Steps>
+  <Step title="Clone the Repository">
+    ```bash
+    git clone https://git.deuxfleurs.fr/Deuxfleurs/garage
+    cd garage/script/helm
+    ```
+  </Step>
+
+  <Step title="Deploy with Default Options">
+    Deploy Garage with default configuration:
+
+    ```bash
+    helm install --create-namespace --namespace garage garage ./garage
+    ```
+  </Step>
+
+  <Step title="Or Deploy with Custom Values">
+    Create a `values.override.yaml` file and deploy:
+
+    ```bash
+    helm install --create-namespace --namespace garage garage ./garage -f values.override.yaml
+    ```
+  </Step>
+
+  <Step title="Configure Cluster Layout">
+    After deployment, manually configure the cluster layout:
+
+    ```bash
+    # Access garage CLI
+    kubectl exec --stdin --tty -n garage garage-0 -- ./garage status
+
+    # Get node IDs from all pods
+    kubectl exec -n garage garage-0 -- ./garage node id
+    kubectl exec -n garage garage-1 -- ./garage node id
+    kubectl exec -n garage garage-2 -- ./garage node id
+
+    # Assign roles (example for 3 nodes)
+    kubectl exec -n garage garage-0 -- ./garage layout assign <node-0-id> -z zone1 -c 1G
+    kubectl exec -n garage garage-0 -- ./garage layout assign <node-1-id> -z zone2 -c 1G
+    kubectl exec -n garage garage-0 -- ./garage layout assign <node-2-id> -z zone3 -c 1G
+
+    # Apply layout
+    kubectl exec -n garage garage-0 -- ./garage layout apply --version 1
+    ```
+  </Step>
+</Steps>
+
+## Helm Configuration Options
+
+View all available configuration values:
+
+```bash
+helm show values ./garage
+```
+
+### Example Custom Values
+
+Here's an example `values.override.yaml` for a production deployment:
+
+```yaml
+garage:
+  # Use 2 replicas per object (adjust based on cluster size)
+  replicationFactor: 2
+
+# Deploy 4 Garage instances
+deployment:
+  replicaCount: 4
+
+# Configure persistent storage
+persistence:
+  meta:
+    storageClass: "fast-ssd"
+    size: 100Mi
+  data:
+    storageClass: "standard-hdd"
+    size: 1Gi
+
+# Configure S3 API ingress
+ingress:
+  s3:
+    api:
+      enabled: true
+      className: "nginx"
+      annotations:
+        cert-manager.io/cluster-issuer: "letsencrypt-prod"
+        nginx.ingress.kubernetes.io/proxy-body-size: 500m
+      hosts:
+        - host: s3-api.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls:
+        - secretName: garage-ingress-cert
+          hosts:
+            - s3-api.example.com
+```
+
+### MicroK8s Example
+
+For MicroK8s clusters:
+
+```yaml
+garage:
+  replicationFactor: 2
+
+deployment:
+  replicaCount: 4
+
+persistence:
+  meta:
+    storageClass: "openebs-hostpath"
+    size: 100Mi
+  data:
+    storageClass: "openebs-hostpath"
+    size: 1Gi
+
+ingress:
+  s3:
+    api:
+      enabled: true
+      className: "public"
+      annotations:
+        cert-manager.io/cluster-issuer: "letsencrypt-prod"
+        nginx.ingress.kubernetes.io/proxy-body-size: 500m
+      hosts:
+        - host: s3-api.my-domain.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls:
+        - secretName: garage-ingress-cert
+          hosts:
+            - s3-api.my-domain.com
+```
+
+## Method 2: Manual Deployment
+
+For more control, you can deploy Garage using manual Kubernetes manifests.
+
+### CustomResourceDefinition (CRD)
+
+First, apply the Garage CRD for Kubernetes discovery:
+
+```bash
+kubectl apply -k garage/script/k8s/crd
+```
+
+### ConfigMap
+
+Create a ConfigMap with Garage configuration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: garage-config
+  namespace: default
+data:
+  garage.toml: |-
+    metadata_dir = "/tmp/meta"
+    data_dir = "/tmp/data"
+
+    replication_factor = 3
+
+    rpc_bind_addr = "[::]:3901"
+    rpc_secret = "1799bccfd7411eddcf9ebd316bc1f5287ad12a68094e1c6ac6abde7e6feae1ec"
+
+    bootstrap_peers = []
+
+    kubernetes_namespace = "default"
+    kubernetes_service_name = "garage-daemon"
+    kubernetes_skip_crd = false
+
+    [s3_api]
+    s3_region = "garage"
+    api_bind_addr = "[::]:3900"
+    root_domain = ".s3.garage.tld"
+
+    [s3_web]
+    bind_addr = "[::]:3902"
+    root_domain = ".web.garage.tld"
+    index = "index.html"
+```
+
+Apply the ConfigMap:
+
+```bash
+kubectl apply -f config.yaml
+```
+
+### StatefulSet
+
+Create a StatefulSet for Garage pods:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: garage
+spec:
+  selector:
+    matchLabels:
+      app: garage
+  serviceName: "garage"
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: garage
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: garage
+        image: dxflrs/garage:v2.2.0
+        ports:
+        - containerPort: 3900
+          name: s3-api
+        - containerPort: 3901
+          name: rpc
+        - containerPort: 3902
+          name: web-api
+        volumeMounts:
+        - name: meta
+          mountPath: /tmp/meta
+        - name: data
+          mountPath: /tmp/data
+        - name: config
+          mountPath: /etc/garage.toml
+          subPath: garage.toml
+      volumes:
+      - name: config
+        configMap:
+          name: garage-config
+  volumeClaimTemplates:
+  - metadata:
+      name: meta
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+Apply the StatefulSet:
+
+```bash
+kubectl apply -f statefulset.yaml
+```
+
+### Service
+
+Create services for Garage:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-s3-api
+spec:
+  selector:
+    app: garage
+  ports:
+  - port: 3900
+    targetPort: 3900
+    name: s3-api
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-daemon
+spec:
+  selector:
+    app: garage
+  clusterIP: None
+  ports:
+  - port: 3901
+    targetPort: 3901
+    name: rpc
+```
+
+### RBAC Configuration
+
+For Kubernetes discovery to work, apply RBAC permissions:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: garage-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: system:serviceaccount:default:default
+```
+
+## Managing CustomResourceDefinitions
+
+If you want to manage the CRD outside of Helm:
+
+<Steps>
+  <Step title="Apply CRD Separately">
+    ```bash
+    kubectl apply -k garage/script/k8s/crd
+    ```
+  </Step>
+
+  <Step title="Skip CRD in Helm">
+    Add to your `values.override.yaml`:
+
+    ```yaml
+    garage:
+      kubernetesSkipCrd: true
+    ```
+  </Step>
+
+  <Step title="Deploy Helm Chart">
+    ```bash
+    helm install --create-namespace --namespace garage garage ./garage -f values.override.yaml
+    ```
+  </Step>
+</Steps>
+
+## Scaling and Maintenance
+
+### Increasing PVC Size
+
+<Steps>
+  <Step title="Verify StorageClass Supports Expansion">
+    ```bash
+    kubectl -n garage get pvc
+    kubectl get storageclasses.storage.k8s.io <storage-class-name>
+    ```
+
+    Ensure `ALLOWVOLUMEEXPANSION` is `true`.
+  </Step>
+
+  <Step title="Resize PVCs">
+    ```bash
+    kubectl -n garage edit pvc data-garage-0
+    kubectl -n garage edit pvc data-garage-1
+    kubectl -n garage edit pvc data-garage-2
+    kubectl -n garage edit pvc meta-garage-0
+    kubectl -n garage edit pvc meta-garage-1
+    kubectl -n garage edit pvc meta-garage-2
+    ```
+  </Step>
+
+  <Step title="Update StatefulSet Template">
+    ```bash
+    # Delete StatefulSet but keep pods
+    kubectl -n garage delete sts --cascade=orphan garage
+
+    # Update values.yaml with new sizes
+    # Redeploy Helm chart
+    helm upgrade --namespace garage garage ./garage -f values.override.yaml
+    ```
+  </Step>
+</Steps>
+
+### Accessing Garage CLI
+
+Create an alias for easy CLI access:
+
+```bash
+alias garage="kubectl exec -n garage -it garage-0 -- /garage"
+
+# Use the alias
+garage status
+garage bucket list
+garage key list
+```
+
+## Testing with Minikube
+
+For local testing:
+
+```bash
+# Start Minikube
+minikube start
+
+# Apply configurations
+minikube kubectl -- apply -f config.yaml
+minikube kubectl -- apply -f daemon.yaml
+
+# Open dashboard
+minikube dashboard
+
+# Access Garage CLI
+minikube kubectl -- exec -it garage-0 --container garage -- /garage status
+```
+
+## Uninstalling
+
+To remove Garage from Kubernetes:
+
+```bash
+# Using Helm
+helm delete --namespace garage garage
+
+# Manually remove CRD if needed
+kubectl delete crd garagenodes.deuxfleurs.fr
+
+# Delete namespace
+kubectl delete namespace garage
+```
+
+<Warning>
+  Uninstalling will not automatically delete PVCs. Remove them manually if you want to delete all data.
+</Warning>
+
+## Troubleshooting
+
+### Pods Not Starting
+
+```bash
+# Check pod status
+kubectl -n garage get pods
+
+# View pod logs
+kubectl -n garage logs garage-0
+
+# Describe pod for events
+kubectl -n garage describe pod garage-0
+```
+
+### Service Discovery Issues
+
+Ensure:
+- CRD is properly installed
+- RBAC permissions are configured
+- `kubernetes_namespace` and `kubernetes_service_name` match your deployment
+
+### Storage Issues
+
+```bash
+# Check PVC status
+kubectl -n garage get pvc
+
+# Check PV status
+kubectl get pv
+
+# Describe PVC for events
+kubectl -n garage describe pvc data-garage-0
+```
+
+## Next Steps
+
+- Configure [ingress](/advanced/reverse-proxy) for external access
+- Set up [monitoring](/operations/monitoring) with Prometheus
+- Learn about [multi-node cluster management](/deployment/multi-node)
+- Explore [S3 API compatibility](/api/s3-compatibility)

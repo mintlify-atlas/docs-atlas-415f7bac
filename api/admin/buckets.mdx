@@ -1,0 +1,714 @@
+---
+title: Bucket Management
+description: Endpoints for managing S3 buckets in Garage
+---
+
+Bucket management endpoints allow you to create, configure, and manage S3 buckets in your Garage cluster.
+
+## List Buckets
+
+Returns all buckets in the cluster with their IDs and aliases.
+
+```bash
+GET /v2/ListBuckets
+```
+
+### Response
+
+<ResponseField name="buckets" type="array" required>
+  Array of bucket information objects
+  
+  <Expandable title="Bucket Object">
+    <ResponseField name="id" type="string">
+      Bucket ID (hex-encoded)
+    </ResponseField>
+    
+    <ResponseField name="created" type="string">
+      Bucket creation date (ISO 8601 format)
+    </ResponseField>
+    
+    <ResponseField name="globalAliases" type="array">
+      List of global aliases for this bucket
+    </ResponseField>
+    
+    <ResponseField name="localAliases" type="array">
+      List of local aliases for this bucket
+      
+      <Expandable title="Local Alias Object">
+        <ResponseField name="accessKeyId" type="string">
+          Access key ID that owns this alias
+        </ResponseField>
+        
+        <ResponseField name="alias" type="string">
+          Local alias name
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  http://localhost:3903/v2/ListBuckets | jq
+```
+
+```json
+[
+  {
+    "id": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+    "created": "2025-06-15T10:23:45.123Z",
+    "globalAliases": ["my-bucket"],
+    "localAliases": [
+      {
+        "accessKeyId": "GK31c2f218a2e44f485b94239e",
+        "alias": "my-local-bucket"
+      }
+    ]
+  }
+]
+```
+
+## Get Bucket Info
+
+Returns detailed information about a specific bucket.
+
+```bash
+GET /v2/GetBucketInfo
+```
+
+### Query Parameters
+
+<ParamField query="id" type="string">
+  Exact bucket ID to look up (hex-encoded)
+</ParamField>
+
+<ParamField query="globalAlias" type="string">
+  Global alias of bucket to look up
+</ParamField>
+
+<ParamField query="search" type="string">
+  Partial ID or alias to search for
+</ParamField>
+
+<Note>
+You must specify exactly one of: `id`, `globalAlias`, or `search`
+</Note>
+
+### Response
+
+<ResponseField name="id" type="string" required>
+  Bucket ID (hex-encoded)
+</ResponseField>
+
+<ResponseField name="created" type="string" required>
+  Bucket creation date (ISO 8601)
+</ResponseField>
+
+<ResponseField name="globalAliases" type="array" required>
+  List of global aliases
+</ResponseField>
+
+<ResponseField name="websiteAccess" type="boolean" required>
+  Whether website access is enabled
+</ResponseField>
+
+<ResponseField name="websiteConfig" type="object">
+  Website configuration (if enabled)
+  
+  <Expandable title="Website Config">
+    <ResponseField name="indexDocument" type="string">
+      Index document filename (e.g., "index.html")
+    </ResponseField>
+    
+    <ResponseField name="errorDocument" type="string">
+      Error document filename (e.g., "error.html")
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="keys" type="array" required>
+  Access keys with permissions on this bucket
+  
+  <Expandable title="Key Object">
+    <ResponseField name="accessKeyId" type="string">
+      Access key ID
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      Key name
+    </ResponseField>
+    
+    <ResponseField name="permissions" type="object">
+      Permissions granted to this key
+      
+      <Expandable title="Permissions">
+        <ResponseField name="read" type="boolean">
+          Read permission
+        </ResponseField>
+        
+        <ResponseField name="write" type="boolean">
+          Write permission
+        </ResponseField>
+        
+        <ResponseField name="owner" type="boolean">
+          Owner permission
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="bucketLocalAliases" type="array">
+      Local aliases for this bucket under this key
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="objects" type="integer" required>
+  Number of objects in the bucket
+</ResponseField>
+
+<ResponseField name="bytes" type="integer" required>
+  Total bytes used by objects
+</ResponseField>
+
+<ResponseField name="unfinishedUploads" type="integer" required>
+  Number of unfinished uploads
+</ResponseField>
+
+<ResponseField name="unfinishedMultipartUploads" type="integer" required>
+  Number of unfinished multipart uploads
+</ResponseField>
+
+<ResponseField name="quotas" type="object" required>
+  Bucket quotas
+  
+  <Expandable title="Quotas">
+    <ResponseField name="maxSize" type="integer">
+      Maximum bucket size in bytes (null for unlimited)
+    </ResponseField>
+    
+    <ResponseField name="maxObjects" type="integer">
+      Maximum number of objects (null for unlimited)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  'http://localhost:3903/v2/GetBucketInfo?globalAlias=my-bucket' | jq
+```
+
+```json
+{
+  "id": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+  "created": "2025-06-15T10:23:45.123Z",
+  "globalAliases": ["my-bucket"],
+  "websiteAccess": false,
+  "websiteConfig": null,
+  "keys": [
+    {
+      "accessKeyId": "GK31c2f218a2e44f485b94239e",
+      "name": "my-key",
+      "permissions": {
+        "read": true,
+        "write": true,
+        "owner": false
+      },
+      "bucketLocalAliases": []
+    }
+  ],
+  "objects": 42,
+  "bytes": 3145728,
+  "unfinishedUploads": 0,
+  "unfinishedMultipartUploads": 0,
+  "quotas": {
+    "maxSize": null,
+    "maxObjects": null
+  }
+}
+```
+
+## Create Bucket
+
+Creates a new bucket with optional global or local aliases.
+
+```bash
+POST /v2/CreateBucket
+```
+
+### Request Body
+
+<ParamField body="globalAlias" type="string">
+  Global alias for the bucket
+</ParamField>
+
+<ParamField body="localAlias" type="object">
+  Local alias configuration
+  
+  <Expandable title="Local Alias Object">
+    <ParamField body="accessKeyId" type="string" required>
+      Access key ID that will own this alias
+    </ParamField>
+    
+    <ParamField body="alias" type="string" required>
+      Local alias name
+    </ParamField>
+    
+    <ParamField body="allow" type="object">
+      Initial permissions to grant
+      
+      <Expandable title="Permissions">
+        <ParamField body="read" type="boolean">
+          Grant read permission
+        </ParamField>
+        
+        <ParamField body="write" type="boolean">
+          Grant write permission
+        </ParamField>
+        
+        <ParamField body="owner" type="boolean">
+          Grant owner permission
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<Note>
+You can specify both `globalAlias` and `localAlias` to create two aliases at once.
+</Note>
+
+### Response
+
+Returns the same response as `GetBucketInfo`.
+
+### Example: Create with Global Alias
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{"globalAlias": "my-new-bucket"}' \
+  http://localhost:3903/v2/CreateBucket
+```
+
+### Example: Create with Local Alias and Permissions
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "localAlias": {
+      "accessKeyId": "GK31c2f218a2e44f485b94239e",
+      "alias": "my-local-bucket",
+      "allow": {
+        "read": true,
+        "write": true,
+        "owner": false
+      }
+    }
+  }' \
+  http://localhost:3903/v2/CreateBucket
+```
+
+## Update Bucket
+
+Updates bucket configuration including website settings and quotas.
+
+```bash
+POST /v2/UpdateBucket?id=<bucket-id>
+```
+
+### Query Parameters
+
+<ParamField query="id" type="string" required>
+  ID of the bucket to update (hex-encoded)
+</ParamField>
+
+### Request Body
+
+<ParamField body="websiteAccess" type="object">
+  Website access configuration
+  
+  <Expandable title="Website Access">
+    <ParamField body="enabled" type="boolean" required>
+      Enable or disable website access
+    </ParamField>
+    
+    <ParamField body="indexDocument" type="string">
+      Index document (required if enabled=true)
+    </ParamField>
+    
+    <ParamField body="errorDocument" type="string">
+      Error document (optional)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="quotas" type="object">
+  Bucket quotas
+  
+  <Expandable title="Quotas">
+    <ParamField body="maxSize" type="integer">
+      Maximum size in bytes (null for unlimited)
+    </ParamField>
+    
+    <ParamField body="maxObjects" type="integer">
+      Maximum number of objects (null for unlimited)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<Note>
+When updating quotas, both `maxSize` and `maxObjects` must be specified. Set both to `null` to remove quotas.
+</Note>
+
+### Example: Enable Website
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "websiteAccess": {
+      "enabled": true,
+      "indexDocument": "index.html",
+      "errorDocument": "error.html"
+    }
+  }' \
+  'http://localhost:3903/v2/UpdateBucket?id=70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a'
+```
+
+### Example: Set Quotas
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "quotas": {
+      "maxSize": 107374182400,
+      "maxObjects": 100000
+    }
+  }' \
+  'http://localhost:3903/v2/UpdateBucket?id=70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a'
+```
+
+## Delete Bucket
+
+Deletes an empty bucket and all its aliases.
+
+```bash
+POST /v2/DeleteBucket?id=<bucket-id>
+```
+
+### Query Parameters
+
+<ParamField query="id" type="string" required>
+  ID of the bucket to delete (hex-encoded)
+</ParamField>
+
+<Warning>
+**This will delete all aliases associated with the bucket!** The bucket must be empty before deletion.
+</Warning>
+
+### Example
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  'http://localhost:3903/v2/DeleteBucket?id=70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a'
+```
+
+### Error Responses
+
+- `400 Bad Request`: Bucket is not empty
+- `404 Not Found`: Bucket not found
+
+## Add Bucket Alias
+
+Adds a global or local alias to a bucket.
+
+```bash
+POST /v2/AddBucketAlias
+```
+
+### Request Body
+
+**For Global Alias:**
+
+<ParamField body="bucketId" type="string" required>
+  Bucket ID (hex-encoded)
+</ParamField>
+
+<ParamField body="globalAlias" type="string" required>
+  Global alias name
+</ParamField>
+
+**For Local Alias:**
+
+<ParamField body="bucketId" type="string" required>
+  Bucket ID (hex-encoded)
+</ParamField>
+
+<ParamField body="accessKeyId" type="string" required>
+  Access key ID that will own this alias
+</ParamField>
+
+<ParamField body="localAlias" type="string" required>
+  Local alias name
+</ParamField>
+
+### Example: Add Global Alias
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "bucketId": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+    "globalAlias": "my-bucket-alias"
+  }' \
+  http://localhost:3903/v2/AddBucketAlias
+```
+
+### Example: Add Local Alias
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "bucketId": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+    "accessKeyId": "GK31c2f218a2e44f485b94239e",
+    "localAlias": "my-local-alias"
+  }' \
+  http://localhost:3903/v2/AddBucketAlias
+```
+
+## Remove Bucket Alias
+
+Removes a global or local alias from a bucket.
+
+```bash
+POST /v2/RemoveBucketAlias
+```
+
+### Request Body
+
+Same format as `AddBucketAlias`.
+
+### Example
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "bucketId": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+    "globalAlias": "my-bucket-alias"
+  }' \
+  http://localhost:3903/v2/RemoveBucketAlias
+```
+
+## Allow Bucket Key
+
+Grants permissions for an access key on a bucket.
+
+```bash
+POST /v2/AllowBucketKey
+```
+
+### Request Body
+
+<ParamField body="bucketId" type="string" required>
+  Bucket ID (hex-encoded)
+</ParamField>
+
+<ParamField body="accessKeyId" type="string" required>
+  Access key ID
+</ParamField>
+
+<ParamField body="permissions" type="object" required>
+  Permissions to grant
+  
+  <Expandable title="Permissions">
+    <ParamField body="read" type="boolean">
+      If true, grant read permission; if false, keep existing permission
+    </ParamField>
+    
+    <ParamField body="write" type="boolean">
+      If true, grant write permission; if false, keep existing permission
+    </ParamField>
+    
+    <ParamField body="owner" type="boolean">
+      If true, grant owner permission; if false, keep existing permission
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<Warning>
+**Unconventional Semantics:** Setting a permission to `true` grants it. Setting to `false` keeps the existing permission unchanged. To deny permissions, use `DenyBucketKey`.
+</Warning>
+
+### Example
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "bucketId": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+    "accessKeyId": "GK31c2f218a2e44f485b94239e",
+    "permissions": {
+      "read": true,
+      "write": true,
+      "owner": false
+    }
+  }' \
+  http://localhost:3903/v2/AllowBucketKey
+```
+
+## Deny Bucket Key
+
+Revokes permissions for an access key on a bucket.
+
+```bash
+POST /v2/DenyBucketKey
+```
+
+### Request Body
+
+Same format as `AllowBucketKey`.
+
+<Warning>
+**Unconventional Semantics:** Setting a permission to `true` revokes it. Setting to `false` keeps the existing permission unchanged.
+</Warning>
+
+### Example
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "bucketId": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+    "accessKeyId": "GK31c2f218a2e44f485b94239e",
+    "permissions": {
+      "read": true,
+      "write": false,
+      "owner": false
+    }
+  }' \
+  http://localhost:3903/v2/DenyBucketKey
+```
+
+## Cleanup Incomplete Uploads
+
+Removes incomplete multipart uploads older than a specified number of seconds.
+
+```bash
+POST /v2/CleanupIncompleteUploads
+```
+
+### Request Body
+
+<ParamField body="bucketId" type="string" required>
+  Bucket ID (hex-encoded)
+</ParamField>
+
+<ParamField body="olderThanSecs" type="integer" required>
+  Delete uploads older than this many seconds
+</ParamField>
+
+### Response
+
+<ResponseField name="uploadsDeleted" type="integer" required>
+  Number of uploads that were deleted
+</ResponseField>
+
+### Example
+
+```bash
+# Delete incomplete uploads older than 7 days
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "bucketId": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+    "olderThanSecs": 604800
+  }' \
+  http://localhost:3903/v2/CleanupIncompleteUploads
+```
+
+```json
+{
+  "uploadsDeleted": 12
+}
+```
+
+## Inspect Object
+
+Returns detailed internal information about an object in a bucket.
+
+```bash
+GET /v2/InspectObject?bucketId=<bucket-id>&key=<object-key>
+```
+
+### Query Parameters
+
+<ParamField query="bucketId" type="string" required>
+  Bucket ID (hex-encoded)
+</ParamField>
+
+<ParamField query="key" type="string" required>
+  Object key (URL-encoded)
+</ParamField>
+
+### Response
+
+<ResponseField name="bucketId" type="string" required>
+  Bucket ID
+</ResponseField>
+
+<ResponseField name="key" type="string" required>
+  Object key
+</ResponseField>
+
+<ResponseField name="versions" type="array" required>
+  Array of object versions
+  
+  <Expandable title="Version Object">
+    <ResponseField name="uuid" type="string">
+      Version UUID (hex-encoded)
+    </ResponseField>
+    
+    <ResponseField name="timestamp" type="string">
+      Version timestamp (ISO 8601)
+    </ResponseField>
+    
+    <ResponseField name="size" type="integer">
+      Object size in bytes
+    </ResponseField>
+    
+    <ResponseField name="etag" type="string">
+      Object ETag
+    </ResponseField>
+    
+    <ResponseField name="encrypted" type="boolean">
+      Whether the object is encrypted
+    </ResponseField>
+    
+    <ResponseField name="uploading" type="boolean">
+      Whether this version is currently uploading
+    </ResponseField>
+    
+    <ResponseField name="deleteMarker" type="boolean">
+      Whether this is a delete marker
+    </ResponseField>
+    
+    <ResponseField name="blocks" type="array">
+      Data blocks for this version
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  'http://localhost:3903/v2/InspectObject?bucketId=70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a&key=myfile.txt' | jq
+```

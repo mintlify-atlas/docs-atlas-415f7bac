@@ -1,0 +1,435 @@
+---
+title: Object Operations
+description: S3 object operations for uploading, downloading, and managing objects
+---
+
+This page documents the S3 API operations for managing objects in Garage.
+
+## PutObject
+
+Uploads an object to a bucket.
+
+```http
+PUT /{bucket}/{key} HTTP/1.1
+Host: s3.garage.example.com
+Content-Type: application/octet-stream
+Content-Length: {size}
+```
+
+### Request Headers
+
+<ParamField header="Content-Type" type="string">
+  MIME type of the object
+</ParamField>
+
+<ParamField header="Content-MD5" type="string">
+  Base64-encoded MD5 hash of the object data for integrity verification
+</ParamField>
+
+<ParamField header="x-amz-meta-*" type="string">
+  User-defined metadata (e.g., `x-amz-meta-author: John Doe`)
+</ParamField>
+
+<ParamField header="Cache-Control" type="string">
+  Cache control directives
+</ParamField>
+
+<ParamField header="Content-Disposition" type="string">
+  Presentation information for the object
+</ParamField>
+
+<ParamField header="Content-Encoding" type="string">
+  Content encodings applied to the object
+</ParamField>
+
+<ParamField header="Content-Language" type="string">
+  Language of the content
+</ParamField>
+
+<ParamField header="Expires" type="string">
+  Expiry date for the object
+</ParamField>
+
+### Checksums
+
+Garage supports additional checksum algorithms:
+
+<ParamField header="x-amz-checksum-crc32" type="string">
+  Base64-encoded CRC32 checksum
+</ParamField>
+
+<ParamField header="x-amz-checksum-crc32c" type="string">
+  Base64-encoded CRC32C checksum
+</ParamField>
+
+<ParamField header="x-amz-checksum-sha1" type="string">
+  Base64-encoded SHA1 checksum
+</ParamField>
+
+<ParamField header="x-amz-checksum-sha256" type="string">
+  Base64-encoded SHA256 checksum
+</ParamField>
+
+### Example
+
+```bash AWS CLI
+aws s3 cp file.txt s3://my-bucket/file.txt \
+  --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl -X PUT https://s3.garage.example.com/my-bucket/file.txt \
+  -H "Authorization: AWS4-HMAC-SHA256 ..." \
+  -H "Content-Type: text/plain" \
+  --data-binary @file.txt
+```
+
+### Response
+
+```http
+HTTP/1.1 200 OK
+ETag: "d41d8cd98f00b204e9800998ecf8427e"
+x-amz-version-id: 1a2b3c4d
+```
+
+<ParamField header="ETag" type="string">
+  Entity tag (MD5 hash for unencrypted objects)
+</ParamField>
+
+<ParamField header="x-amz-version-id" type="string">
+  Version ID of the object (hex-encoded UUID)
+</ParamField>
+
+## GetObject
+
+Retrieves an object from a bucket.
+
+```http
+GET /{bucket}/{key} HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Query Parameters
+
+<ParamField query="response-cache-control" type="string">
+  Override `Cache-Control` header in response
+</ParamField>
+
+<ParamField query="response-content-disposition" type="string">
+  Override `Content-Disposition` header in response
+</ParamField>
+
+<ParamField query="response-content-encoding" type="string">
+  Override `Content-Encoding` header in response
+</ParamField>
+
+<ParamField query="response-content-language" type="string">
+  Override `Content-Language` header in response
+</ParamField>
+
+<ParamField query="response-content-type" type="string">
+  Override `Content-Type` header in response
+</ParamField>
+
+<ParamField query="response-expires" type="string">
+  Override `Expires` header in response
+</ParamField>
+
+### Request Headers
+
+<ParamField header="Range" type="string">
+  Downloads a specific byte range (e.g., `bytes=0-1023`)
+</ParamField>
+
+<ParamField header="If-Match" type="string">
+  Return object only if ETag matches
+</ParamField>
+
+<ParamField header="If-None-Match" type="string">
+  Return object only if ETag doesn't match
+</ParamField>
+
+<ParamField header="If-Modified-Since" type="string">
+  Return object only if modified since specified date
+</ParamField>
+
+<ParamField header="If-Unmodified-Since" type="string">
+  Return object only if not modified since specified date
+</ParamField>
+
+<ParamField header="x-amz-checksum-mode" type="string">
+  Set to `ENABLED` to receive checksum headers in response
+</ParamField>
+
+### Example
+
+```bash AWS CLI
+aws s3 cp s3://my-bucket/file.txt file.txt \
+  --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl https://s3.garage.example.com/my-bucket/file.txt \
+  -H "Authorization: AWS4-HMAC-SHA256 ..." \
+  -o file.txt
+```
+
+```bash Range Request
+curl https://s3.garage.example.com/my-bucket/file.txt \
+  -H "Authorization: AWS4-HMAC-SHA256 ..." \
+  -H "Range: bytes=0-1023" \
+  -o first-kb.bin
+```
+
+### Response
+
+```http
+HTTP/1.1 200 OK
+Content-Type: text/plain
+Content-Length: 1024
+ETag: "d41d8cd98f00b204e9800998ecf8427e"
+Last-Modified: Tue, 04 Mar 2026 10:30:00 GMT
+Accept-Ranges: bytes
+
+{object data}
+```
+
+## HeadObject
+
+Retrieves metadata about an object without downloading the object itself.
+
+```http
+HEAD /{bucket}/{key} HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Example
+
+```bash AWS CLI
+aws s3api head-object --bucket my-bucket --key file.txt \
+  --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl -I https://s3.garage.example.com/my-bucket/file.txt \
+  -H "Authorization: AWS4-HMAC-SHA256 ..."
+```
+
+### Response
+
+```http
+HTTP/1.1 200 OK
+Content-Type: text/plain
+Content-Length: 1024
+ETag: "d41d8cd98f00b204e9800998ecf8427e"
+Last-Modified: Tue, 04 Mar 2026 10:30:00 GMT
+Accept-Ranges: bytes
+```
+
+## DeleteObject
+
+Deletes an object from a bucket.
+
+```http
+DELETE /{bucket}/{key} HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Example
+
+```bash AWS CLI
+aws s3 rm s3://my-bucket/file.txt \
+  --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl -X DELETE https://s3.garage.example.com/my-bucket/file.txt \
+  -H "Authorization: AWS4-HMAC-SHA256 ..."
+```
+
+### Response
+
+```http
+HTTP/1.1 204 No Content
+```
+
+<Info>
+  DeleteObject succeeds even if the object doesn't exist (idempotent operation).
+</Info>
+
+## DeleteObjects
+
+Deletes multiple objects in a single request.
+
+```http
+POST /{bucket}?delete HTTP/1.1
+Host: s3.garage.example.com
+Content-Type: application/xml
+```
+
+### Request Body
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Delete>
+  <Object>
+    <Key>file1.txt</Key>
+  </Object>
+  <Object>
+    <Key>file2.txt</Key>
+  </Object>
+  <Quiet>false</Quiet>
+</Delete>
+```
+
+### Example
+
+```bash AWS CLI
+aws s3api delete-objects --bucket my-bucket \
+  --delete "Objects=[{Key=file1.txt},{Key=file2.txt}]" \
+  --endpoint-url https://s3.garage.example.com
+```
+
+### Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<DeleteResult>
+  <Deleted>
+    <Key>file1.txt</Key>
+  </Deleted>
+  <Deleted>
+    <Key>file2.txt</Key>
+  </Deleted>
+</DeleteResult>
+```
+
+## CopyObject
+
+Copies an object from one location to another.
+
+```http
+PUT /{dest-bucket}/{dest-key} HTTP/1.1
+Host: s3.garage.example.com
+x-amz-copy-source: /source-bucket/source-key
+```
+
+### Request Headers
+
+<ParamField header="x-amz-copy-source" type="string" required>
+  Source object in format: `/bucket/key`
+</ParamField>
+
+<ParamField header="x-amz-copy-source-if-match" type="string">
+  Copy only if source ETag matches
+</ParamField>
+
+<ParamField header="x-amz-copy-source-if-none-match" type="string">
+  Copy only if source ETag doesn't match
+</ParamField>
+
+<ParamField header="x-amz-copy-source-if-modified-since" type="string">
+  Copy only if source modified since date
+</ParamField>
+
+<ParamField header="x-amz-copy-source-if-unmodified-since" type="string">
+  Copy only if source not modified since date
+</ParamField>
+
+<ParamField header="x-amz-metadata-directive" type="string">
+  `COPY` (default) or `REPLACE` to override metadata
+</ParamField>
+
+### Example
+
+```bash AWS CLI
+aws s3 cp s3://source-bucket/file.txt s3://dest-bucket/copy.txt \
+  --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl -X PUT https://s3.garage.example.com/dest-bucket/copy.txt \
+  -H "Authorization: AWS4-HMAC-SHA256 ..." \
+  -H "x-amz-copy-source: /source-bucket/file.txt"
+```
+
+### Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<CopyObjectResult>
+  <ETag>"d41d8cd98f00b204e9800998ecf8427e"</ETag>
+  <LastModified>2026-03-04T10:30:00.000Z</LastModified>
+</CopyObjectResult>
+```
+
+## PostObject
+
+Uploads an object using HTML form-based upload.
+
+```http
+POST /{bucket} HTTP/1.1
+Host: s3.garage.example.com
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+```
+
+### Example HTML Form
+
+```html
+<form action="https://s3.garage.example.com/my-bucket" method="post" enctype="multipart/form-data">
+  <input type="hidden" name="key" value="uploads/${filename}" />
+  <input type="hidden" name="acl" value="private" />
+  <input type="hidden" name="x-amz-algorithm" value="AWS4-HMAC-SHA256" />
+  <input type="hidden" name="x-amz-credential" value="GK.../20260304/garage/s3/aws4_request" />
+  <input type="hidden" name="x-amz-date" value="20260304T120000Z" />
+  <input type="hidden" name="policy" value="{base64-encoded-policy}" />
+  <input type="hidden" name="x-amz-signature" value="{signature}" />
+  <input type="file" name="file" />
+  <button type="submit">Upload</button>
+</form>
+```
+
+<Info>
+  PostObject is useful for browser-based uploads. See [AWS documentation](https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectPOST.html) for policy document format.
+</Info>
+
+## Block Storage Details
+
+Garage stores objects using a content-addressed block storage system:
+
+### Inline Storage
+
+Objects smaller than the inline threshold (3KB by default) are stored directly in the object table for better performance.
+
+### Block-based Storage
+
+Larger objects are split into blocks:
+
+1. Data is chunked based on the configured `block_size` (default: 1MB)
+2. Each block is encrypted (if SSE-C is used) and hashed with BLAKE2
+3. Blocks are distributed across cluster nodes
+4. Block references are stored in the version table
+
+### Checksums
+
+Garage calculates and verifies checksums during upload:
+
+- **MD5**: Used as ETag for non-encrypted objects
+- **SHA256**: Optional, for AWS Signature v4
+- **CRC32/CRC32C/CRC64NVME**: Optional additional checksums
+
+## Unsupported Operations
+
+The following object operations are **not implemented**:
+
+- Object ACLs (`GetObjectAcl`, `PutObjectAcl`)
+- Object tagging (`GetObjectTagging`, `PutObjectTagging`, `DeleteObjectTagging`)
+- Object legal hold and retention
+- Object torrents
+- Object versioning (separate version operations)
+
+## See Also
+
+- [Multipart Uploads](/api/s3/multipart-uploads) - For large objects
+- [Bucket Operations](/api/s3/bucket-operations)
+- [S3 Authentication](/api/s3/authentication)

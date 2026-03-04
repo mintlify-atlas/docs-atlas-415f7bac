@@ -1,0 +1,379 @@
+---
+title: 'Disaster Recovery'
+description: 'Recover from hardware failures, data loss, and corruption in your Garage cluster'
+---
+
+Garage is designed to work on old, second-hand hardware, which means drive failures are expected. Fortunately, Garage is fully equipped to handle most common failure scenarios.
+
+## Availability Guarantees
+
+With nodes dispersed in **3 or more zones** and **3-way replication** (recommended):
+
+- Cluster remains **fully functional** if failures occur in only one zone
+- Cluster can handle a **complete zone outage** (power/Internet)
+- **No data is lost** if failures occur in at most two zones
+
+<Warning>
+These guarantees only work if your nodes are correctly configured with their zone information. Verify with:
+
+```bash
+garage status
+```
+</Warning>
+
+<Note>
+Temporarily disconnected nodes automatically re-synchronize when they come back online. This guide focuses on permanent failures requiring manual intervention.
+</Note>
+
+## Recovery Scenario 1: Removing a Failed Node
+
+Use this when:
+- You have no spare parts to replace failed components
+- At least 3 nodes remain in the cluster
+- You do **not** plan to replace the node
+
+<Warning>
+If you plan to replace the failed hardware, use Scenario 2 or 3 instead. Removing and re-adding nodes causes unnecessary data reshuffling.
+</Warning>
+
+### Procedure
+
+1. **Get the failed node ID:**
+
+```bash
+garage status
+```
+
+Look for disconnected/unavailable nodes.
+
+2. **Remove the node:**
+
+```bash
+garage layout remove <node_id>
+```
+
+3. **Review the changes:**
+
+```bash
+garage layout show
+```
+
+4. **Apply the changes:**
+
+```bash
+garage layout apply --version <new_version>
+```
+
+Garage will repartition data to ensure 3 copies of everything exist on remaining nodes.
+
+## Recovery Scenario 2: Data Lost, Metadata Intact
+
+Use this when:
+- Only the HDD storing data blocks failed
+- The SSD with metadata is still working
+- Node configuration unchanged
+
+This is the **easiest recovery scenario** - no cluster reconfiguration needed.
+
+### Procedure
+
+1. **Replace the failed HDD** and mount it at the same path
+
+2. **Restart Garage** with the existing configuration
+
+3. **Trigger data resync:**
+
+```bash
+garage repair -a --yes blocks
+```
+
+This re-synchronizes missing data blocks from other nodes.
+
+4. **Monitor progress:**
+
+```bash
+garage stats -a
+```
+
+Look for:
+
+```
+Block manager stats:
+  resync queue length: 26541
+```
+
+This number decreases to zero when the node is fully synchronized.
+
+<Note>
+Depending on the amount of data, this process may take several hours to complete.
+</Note>
+
+## Recovery Scenario 3: Metadata Lost
+
+Use this when:
+- Full node failure (both metadata and data lost)
+- Only metadata directory lost
+- Metadata database corrupted
+
+### When Both Metadata and Data Are Lost
+
+<Note>
+Starting from an empty metadata directory means Garage generates a **new node ID**. You'll need to update the cluster layout.
+</Note>
+
+#### Procedure
+
+1. **Set up replacement drives:**
+   - New SSD for metadata (recommended)
+   - New HDD for data (if needed)
+
+2. **Start Garage** on the new node
+
+3. **Verify new node ID:**
+
+```bash
+garage status
+```
+
+The new node shows as `NO ROLE ASSIGNED`. The old node ID appears in the disconnected section.
+
+4. **Replace the old node with the new one:**
+
+```bash
+garage layout assign <new_node_id> \
+  --replace <old_node_id> \
+  --zone <zone> \
+  --capacity <capacity> \
+  --tag <node_tag>
+```
+
+**Example:**
+```bash
+garage layout assign a11c7cf18af29737 \
+  --replace b10c110e4e854e5a \
+  --zone dc1 \
+  --capacity 2TB \
+  --tag node1
+```
+
+5. **Review and apply:**
+
+```bash
+garage layout show
+garage layout apply --version <new_version>
+```
+
+6. **Monitor synchronization:**
+
+```bash
+garage stats -a
+```
+
+Garage will synchronize all required data onto the new node.
+
+### When Only Metadata Is Corrupted
+
+Use this when:
+- Your metadata database file is corrupted (e.g., after power outage)
+- The node didn't shut down properly
+- You want to avoid changing node IDs
+
+<Note>
+Recovering from corruption without changing node IDs means data blocks don't need to be reshuffled - you only need to restore the metadata.
+</Note>
+
+#### Locate Your Database File
+
+Database location depends on your `db_engine` setting:
+
+- **LMDB:** `<metadata_dir>/db.lmdb/`
+- **Sqlite:** `<metadata_dir>/db.sqlite`
+
+See [Configuration Reference](/cli/configuration#db_engine) for details.
+
+#### Recovery Options
+
+**Option 1: Resync from Other Nodes**
+
+If your cluster has 2 or 3 copies of all data:
+
+1. **Stop Garage**
+
+2. **Delete the corrupted database:**
+
+```bash
+# For LMDB
+rm -rf /path/to/metadata/db.lmdb
+
+# For Sqlite
+rm /path/to/metadata/db.sqlite
+```
+
+3. **Restart Garage**
+
+4. **Repair metadata tables:**
+
+```bash
+garage repair -a --yes tables
+```
+
+The node receives copies of metadata tables from the network. This may take a few minutes to complete.
+
+**Option 2: Restore Garage Snapshot (v0.9.4+)**
+
+If you have [automatic snapshots](/cli/configuration#metadata_auto_snapshot_interval) enabled:
+
+1. **Locate snapshots:**
+
+```bash
+ls -la <metadata_dir>/snapshots/
+```
+
+Snapshots are named by UTC timestamp (e.g., `2024-03-15T12:13:52Z`).
+
+2. **Stop Garage**
+
+3. **Restore the snapshot:**
+
+For LMDB:
+```bash
+cd $METADATA_DIR
+mv db.lmdb db.lmdb.bak
+cp -r snapshots/2024-03-15T12:13:52Z db.lmdb
+```
+
+For Sqlite:
+```bash
+cd $METADATA_DIR
+mv db.sqlite db.sqlite.bak
+cp snapshots/2024-03-15T12:13:52Z db.sqlite
+```
+
+4. **Restart Garage**
+
+5. **Resync recent changes:**
+
+```bash
+garage repair -a --yes tables
+```
+
+This runs quickly as only changes since the snapshot need synchronization.
+
+<Warning>
+If your cluster is not replicated, you'll lose all changes since the snapshot was taken.
+</Warning>
+
+**Option 3: Restore Filesystem Snapshot**
+
+If using ZFS or BTRFS to snapshot your metadata partition:
+
+1. Refer to their specific documentation for rolling back or copying files from snapshots
+2. Restart Garage
+3. Run `garage repair -a --yes tables`
+
+<Warning>
+Depending on filesystem and database engine properties, snapshots taken during write operations may also be corrupted.
+</Warning>
+
+## Multiple Simultaneous Failures
+
+If multiple nodes fail simultaneously:
+
+1. **Assess the situation:**
+
+```bash
+garage status
+```
+
+Determine which zones are affected and how many nodes remain.
+
+2. **Check data availability:**
+
+With 3-way replication:
+- **1 zone down:** Full availability maintained
+- **2 zones down:** Data loss likely, recovery may be partial
+
+3. **Prioritize recovery:**
+   - First: Restore nodes to meet quorum (majority of nodes)
+   - Second: Verify data integrity with `garage repair`
+   - Third: Check for lost blocks with `garage block list-errors`
+
+4. **If data is lost:**
+
+See [Inspecting Lost Blocks](/operations/durability-repairs#inspecting-lost-blocks) for recovery options.
+
+## Preventive Measures
+
+### Automatic Metadata Snapshots
+
+Configure automatic snapshots in your config file:
+
+```toml
+metadata_auto_snapshot_interval = "24h"
+```
+
+### Filesystem-Level Snapshots
+
+Use ZFS or BTRFS for your metadata partition:
+
+```bash
+# ZFS example
+zfs snapshot tank/garage-meta@$(date +%Y%m%d-%H%M%S)
+
+# BTRFS example
+btrfs subvolume snapshot /mnt/garage-meta /mnt/snapshots/garage-meta-$(date +%Y%m%d-%H%M%S)
+```
+
+### Regular Health Checks
+
+Run periodic repairs:
+
+```bash
+# Weekly metadata check
+garage repair --all-nodes --yes tables
+
+# Monthly block verification (automatic via scrub)
+garage repair scrub start
+```
+
+### Monitoring
+
+Monitor critical metrics:
+
+```
+cluster_healthy 1
+block_resync_errored_blocks 0
+cluster_connected_nodes 3
+```
+
+See [Monitoring Guide](/operations/monitoring) for complete details.
+
+## Testing Your Recovery Plan
+
+<Note>
+Regularly test your recovery procedures in a non-production environment:
+</Note>
+
+1. **Simulate node failure** by stopping Garage
+2. **Practice metadata restoration** from snapshots
+3. **Verify data resync** procedures
+4. **Time recovery operations** to understand RTO/RPO
+5. **Document lessons learned**
+
+## Best Practices
+
+1. **Deploy across 3+ zones** for maximum resilience
+2. **Use SSDs for metadata** to reduce corruption risk
+3. **Enable automatic snapshots** on all nodes
+4. **Monitor cluster health** continuously
+5. **Test recovery procedures** regularly
+6. **Keep spare hardware** for quick replacements
+7. **Document your topology** including node IDs and zones
+8. **Back up cluster layout** configuration file
+
+## See Also
+
+- [Data Durability and Repairs](/operations/durability-repairs)
+- [Cluster Layout Management](/operations/cluster-layout)
+- [Monitoring and Metrics](/operations/monitoring)
+- [Multi-HDD Setup](/operations/multi-hdd)

@@ -1,0 +1,263 @@
+---
+title: "Related Work and Comparisons"
+description: "How Garage compares to other storage solutions and why alternatives didn't fit"
+icon: "layer-group"
+---
+
+This page presents the theoretical background on which Garage is built and describes other software storage solutions and why they didn't meet our requirements.
+
+## Context
+
+Data storage is critical—it can lead to data loss if done badly or during hardware failure. Traditional solutions have limitations:
+
+<CardGroup cols={2}>
+  <Card title="Single machine" icon="server">
+    Filesystems + RAID help on one machine, but machine failure puts storage offline and limits scalability
+  </Card>
+  
+  <Card title="Expensive scaling" icon="dollar-sign">
+    Limits can be pushed with expensive specialized machines, but we target off-the-shelf hardware
+  </Card>
+</CardGroup>
+
+**Our focus:**
+
+Non-specialized, off-the-shelf machines that can be as low-powered and failure-prone as a Raspberry Pi.
+
+<Info>
+  Distributed storage helps solve both availability and scalability problems on these machines.
+</Info>
+
+## Storage abstraction categories
+
+Many distributed storage solutions exist, categorized by the abstraction they provide:
+
+### Block storage
+
+**What it is:** The most low-level abstraction—like exposing your raw hard drive over the network.
+
+**Requirements:**
+- Very low latencies
+- Stable, often dedicated networks
+
+**Advantages:**
+- Operating system can manipulate disk devices with minimal constraints
+- Supports any filesystem and exotic features
+
+**Examples:**
+- [iSCSI](https://en.wikipedia.org/wiki/ISCSI)
+- [Fibre Channel](https://en.wikipedia.org/wiki/Fibre_Channel)
+- OpenStack Cinder (uniform API proxy)
+
+### File storage
+
+**What it is:** Higher abstraction providing one filesystem among others.
+
+**Characteristics:**
+- Often relaxes some POSIX constraints
+- Many applications remain compatible without modification
+- Can run databases (like MariaDB) over them, albeit slowly
+
+**Examples:**
+- CephFS (read [RADOS whitepaper](https://ceph.com/assets/pdfs/weil-rados-pdsw07.pdf))
+- Lustre
+- LizardFS
+- MooseFS
+- GlusterFS
+- OpenStack Manila (uniform API proxy)
+
+### Object storage
+
+**What it is:** The highest level abstraction, acknowledging that POSIX filesystem APIs aren't adapted to distributed filesystems.
+
+**Key differences:**
+
+<CardGroup cols={2}>
+  <Card title="Eventual consistency" icon="clock">
+    Strong consistency dropped in favor of eventual consistency—more convenient with high latencies and unreliability
+  </Card>
+  
+  <Card title="WAN-optimized" icon="globe">
+    Often described as "filesystem for the WAN" (pioneered by S3)
+  </Card>
+</CardGroup>
+
+**The standard:**
+
+The S3 HTTP REST API acts as an industry standard, though Amazon S3 source code is not open.
+
+## Existing object storage solutions
+
+### MinIO
+
+**Website:** [min.io](https://min.io/)
+
+**Shared goals:**
+- Self-contained & lightweight
+
+**Conflicting choices:**
+
+MinIO selected two of our non-goals:
+- Storage optimizations through erasure coding
+- POSIX/Filesystem compatibility through strong consistency
+
+<Warning>
+  By pursuing these non-goals, MinIO doesn't reach our desirable properties.
+</Warning>
+
+**Where MinIO falls short:**
+
+| Property | Issue | Impact |
+|----------|-------|--------|
+| **Simple** | Erasure coding creates severe limitations on adding/removing drives | Complex cluster management |
+| **Internet enabled** | Strong consistency makes it latency-sensitive | Poor performance over WAN |
+| **Geo-distribution** | No knowledge of "sites" | Can't distribute data to minimize site failure |
+
+### OpenStack Swift
+
+**Website:** [docs.openstack.org/swift](https://docs.openstack.org/swift/latest/)
+
+<Warning>
+  Fails on **Self-contained & lightweight** goal.
+</Warning>
+
+**Issues:**
+- Requires around 8GB of RAM to start
+- Too resource-intensive for hyperconverged infrastructure
+- Not **Simple** to operate
+
+**Similarity to Garage:**
+
+Swift and Pithos are probably the most similar to AWS S3 with their consistent hashing ring approach.
+
+**Why not Swift:**
+
+Tests by the [ACIDES project](https://acides.org/) showed Swift consumes far more resources (CPU + RAM) than we can afford. Additionally, Swift developers didn't design for geo-distribution.
+
+### Ceph
+
+**Website:** [ceph.io/ceph-storage/object-storage](https://ceph.io/ceph-storage/object-storage/)
+
+<Info>
+  This review applies to the entire Ceph stack: RADOS paper, Ceph Object Storage module, RADOS Gateway, etc.
+</Info>
+
+**Core design decision:**
+
+Ceph was designed for **POSIX/Filesystem compatibility**, which requires strong consistency.
+
+**Cascading effects:**
+
+<Steps>
+  <Step title="Strong consistency requirement">
+    POSIX compatibility demands strong consistency
+  </Step>
+  
+  <Step title="Latency sensitivity">
+    Strong consistency makes Ceph latency-sensitive
+  </Step>
+  
+  <Step title="Fails Internet-enabled goal">
+    High latency sensitivity prevents effective operation over Internet connections
+  </Step>
+</Steps>
+
+**Additional issues:**
+- Industry-oriented design makes it far from **Simple** to operate
+- Not **Self-contained & lightweight**
+- Hard to integrate in hyperconverged infrastructure
+
+<Note>
+  Ceph and MinIO are closer to each other than they are to Garage or OpenStack Swift.
+</Note>
+
+### Pithos
+
+**GitHub:** [github.com/exoscale/pithos](https://github.com/exoscale/pithos)
+
+<Warning>
+  Pithos has been abandoned and should probably not be used.
+</Warning>
+
+**Architecture:**
+- S3 proxy in front of Cassandra (also worked with ScyllaDB)
+- Stored data directly in Cassandra
+
+**Why it was abandoned:**
+
+From the designers themselves: storing data in Cassandra showed limitations that justified abandoning the project.
+
+**Pithos v2:**
+
+They built a closed-source version 2 that doesn't store blobs in the database (only metadata) but didn't communicate further on it.
+
+**Why we didn't adopt their v2 design:**
+
+It doesn't fit our **Self-contained & lightweight** and **Simple** properties. It would:
+- Complicate development
+- Complicate deployment
+- Complicate operations
+- Reduce flexibility
+
+### Riak CS
+
+**Website:** [docs.riak.com/riak/cs](https://docs.riak.com/riak/cs/2.1.1/index.html)
+
+<Note>
+  Analysis not yet written.
+</Note>
+
+### IPFS
+
+**Website:** [ipfs.io](https://ipfs.io/)
+
+<Info>
+  IPFS has design goals radically different from Garage.
+</Info>
+
+We have a detailed blog post discussing the differences: [Garage vs IPFS](https://garagehq.deuxfleurs.fr/blog/2022-ipfs/)
+
+**Key differences:**
+- IPFS focuses on content-addressed, distributed, peer-to-peer file sharing
+- Garage focuses on S3-compatible object storage with geo-replication
+- Different use cases and consistency models
+
+## Why Garage is different
+
+Garage fills a unique niche by combining:
+
+<CardGroup cols={2}>
+  <Card title="Geo-distribution first" icon="earth-americas">
+    Built from the ground up for multi-site deployments over Internet connections
+  </Card>
+  
+  <Card title="Eventual consistency" icon="code-merge">
+    Embraces eventual consistency through CRDTs instead of fighting it
+  </Card>
+  
+  <Card title="True simplicity" icon="sparkles">
+    No external dependencies, minimal resource requirements, simple operations
+  </Card>
+  
+  <Card title="Replication over erasure coding" icon="copy">
+    Simpler data management and placement at the cost of storage efficiency
+  </Card>
+</CardGroup>
+
+## Research background
+
+Garage is built on proven distributed systems research:
+
+- **Dynamo**: Consistent hashing and eventual consistency ([paper](https://dl.acm.org/doi/abs/10.1145/1323293.1294281))
+- **Maglev**: Consistent hashing for load balancing ([paper](https://www.usenix.org/conference/nsdi16/technical-sessions/presentation/eisenbud))
+- **CRDTs**: Conflict-free Replicated Data Types ([paper](https://link.springer.com/chapter/10.1007/978-3-642-24550-3_29))
+
+**Historical attempts:**
+
+Many research projects attempted similar goals. For example:
+- [LBFS](https://pdos.csail.mit.edu/papers/lbfs:sosp01/lbfs.pdf): Used as basis for Seafile
+- Various other academic projects that never saw effective implementation
+
+<Tip>
+  Garage takes these research concepts and creates a practical, production-ready implementation focused on real-world deployments.
+</Tip>

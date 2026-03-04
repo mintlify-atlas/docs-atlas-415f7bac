@@ -1,0 +1,380 @@
+---
+title: "Running with systemd"
+description: "Configure Garage to run as a systemd service on Linux"
+---
+
+This guide shows how to run Garage as a systemd service on Linux, providing automatic startup, process management, and system integration.
+
+## Prerequisites
+
+Before configuring systemd:
+
+- Garage binary installed at `/usr/local/bin/garage`
+- Configuration file at `/etc/garage.toml`
+- Understanding of systemd service management
+
+## Configuration Requirements
+
+For systemd's security features to work correctly, your `/etc/garage.toml` must use specific paths:
+
+```toml
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+```
+
+<Warning>
+  These paths are mandatory for the `DynamicUser` hardening feature. If `/var/lib/garage` exists before first start, the service might not start correctly.
+</Warning>
+
+<Note>
+  On the host filesystem, Garage data will actually be stored in `/var/lib/private/garage` due to systemd's dynamic user mapping.
+</Note>
+
+## Creating the Service File
+
+<Steps>
+  <Step title="Create Service Unit">
+    Create a file at `/etc/systemd/system/garage.service`:
+
+    ```toml
+    [Unit]
+    Description=Garage Data Store
+    After=network-online.target
+    Wants=network-online.target
+
+    [Service]
+    Environment='RUST_LOG=garage=info' 'RUST_BACKTRACE=1'
+    ExecStart=/usr/local/bin/garage server
+    StateDirectory=garage
+    DynamicUser=true
+    ProtectHome=true
+    NoNewPrivileges=true
+    LimitNOFILE=42000
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+  </Step>
+
+  <Step title="Reload systemd">
+    Reload systemd to recognize the new service:
+
+    ```bash
+    sudo systemctl daemon-reload
+    ```
+  </Step>
+</Steps>
+
+## Service Hardening Features
+
+The systemd service file includes several security hardening features:
+
+<AccordionGroup>
+  <Accordion title="DynamicUser=true">
+    - Garage runs as a dynamically-allocated non-privileged user
+    - User ID is allocated at service start
+    - Provides isolation between services
+  </Accordion>
+
+  <Accordion title="ProtectHome=true">
+    - Blocks access to `/home`, `/root`, and `/run/user` directories
+    - Prevents accidental or malicious access to user data
+  </Accordion>
+
+  <Accordion title="NoNewPrivileges=true">
+    - Prevents the process from gaining new privileges
+    - Blocks privilege escalation attempts
+  </Accordion>
+
+  <Accordion title="StateDirectory=garage">
+    - Automatically creates `/var/lib/garage` directory
+    - Sets correct permissions for the dynamic user
+    - Maps to `/var/lib/private/garage` on the host
+  </Accordion>
+
+  <Accordion title="LimitNOFILE=42000">
+    - Increases the file descriptor limit
+    - Necessary for handling many simultaneous connections
+  </Accordion>
+</AccordionGroup>
+
+## Starting the Service
+
+<Steps>
+  <Step title="Start Garage">
+    Start the Garage service:
+
+    ```bash
+    sudo systemctl start garage
+    ```
+  </Step>
+
+  <Step title="Enable Auto-Start">
+    Enable Garage to start automatically at boot:
+
+    ```bash
+    sudo systemctl enable garage
+    ```
+  </Step>
+
+  <Step title="Verify Status">
+    Check that the service is running:
+
+    ```bash
+    sudo systemctl status garage
+    ```
+
+    You should see output indicating the service is active:
+
+    ```
+    ● garage.service - Garage Data Store
+       Loaded: loaded (/etc/systemd/system/garage.service; enabled; vendor preset: enabled)
+       Active: active (running) since Mon 2024-01-15 10:30:00 UTC; 5s ago
+     Main PID: 1234 (garage)
+        Tasks: 10 (limit: 4915)
+       Memory: 45.2M
+       CGroup: /system.slice/garage.service
+               └─1234 /usr/local/bin/garage server
+    ```
+  </Step>
+</Steps>
+
+## Managing the Service
+
+### Basic Commands
+
+```bash
+# Start the service
+sudo systemctl start garage
+
+# Stop the service
+sudo systemctl stop garage
+
+# Restart the service
+sudo systemctl restart garage
+
+# Reload configuration (if supported)
+sudo systemctl reload garage
+
+# Check service status
+sudo systemctl status garage
+
+# Enable auto-start at boot
+sudo systemctl enable garage
+
+# Disable auto-start at boot
+sudo systemctl disable garage
+```
+
+### Viewing Logs
+
+Use `journalctl` to view Garage logs:
+
+```bash
+# View all logs
+sudo journalctl -u garage
+
+# Follow logs in real-time
+sudo journalctl -u garage -f
+
+# View logs since last boot
+sudo journalctl -u garage -b
+
+# View logs from the last hour
+sudo journalctl -u garage --since "1 hour ago"
+
+# View logs with specific priority (error, warning, info, debug)
+sudo journalctl -u garage -p err
+```
+
+## Customizing the Service
+
+### Changing Log Level
+
+Edit the service file to adjust the `RUST_LOG` environment variable:
+
+```toml
+[Service]
+Environment='RUST_LOG=garage=debug' 'RUST_BACKTRACE=1'
+```
+
+Available log levels:
+- `error`: Only errors
+- `warn`: Warnings and errors
+- `info`: Normal operations (default)
+- `debug`: Detailed debugging information
+- `trace`: Very verbose debugging
+
+After modifying, reload and restart:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart garage
+```
+
+### Custom Binary Location
+
+If your Garage binary is in a different location:
+
+```toml
+[Service]
+ExecStart=/path/to/garage server
+```
+
+### Custom Configuration File
+
+To use a non-default configuration file:
+
+```toml
+[Service]
+Environment='GARAGE_CONFIG_FILE=/path/to/garage.toml' 'RUST_LOG=garage=info' 'RUST_BACKTRACE=1'
+```
+
+### Resource Limits
+
+Add additional resource limits:
+
+```toml
+[Service]
+# Limit memory usage to 4GB
+MemoryMax=4G
+
+# Limit CPU usage to 200% (2 cores)
+CPUQuota=200%
+
+# Increase file descriptor limit
+LimitNOFILE=65536
+```
+
+## Using with Multiple Nodes
+
+For multi-node deployments, install and configure the systemd service on each node:
+
+<Steps>
+  <Step title="Install on Each Node">
+    ```bash
+    # Copy binary
+    sudo cp garage /usr/local/bin/
+    sudo chmod +x /usr/local/bin/garage
+
+    # Copy configuration (customize per node)
+    sudo cp garage.toml /etc/garage.toml
+
+    # Copy service file
+    sudo cp garage.service /etc/systemd/system/
+    ```
+  </Step>
+
+  <Step title="Configure Each Node">
+    Ensure each node's `/etc/garage.toml` has:
+    - Unique `rpc_public_addr`
+    - Same `rpc_secret` across all nodes
+    - Appropriate `metadata_dir` and `data_dir`
+  </Step>
+
+  <Step title="Start Services">
+    ```bash
+    # On each node
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now garage
+    ```
+  </Step>
+
+  <Step title="Connect Nodes">
+    After all services are running, connect the nodes using the Garage CLI.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Service Fails to Start
+
+Check the service status and logs:
+
+```bash
+# View detailed status
+sudo systemctl status garage
+
+# View recent error logs
+sudo journalctl -u garage -p err --since "10 minutes ago"
+```
+
+Common issues:
+- Configuration file syntax errors
+- Permission issues with data directories
+- Port already in use
+- Invalid paths in configuration
+
+### Permission Denied Errors
+
+If you see permission errors:
+
+1. Verify paths in `/etc/garage.toml` use `/var/lib/garage/`
+2. Remove any existing `/var/lib/garage` directory:
+   ```bash
+   sudo rm -rf /var/lib/garage
+   ```
+3. Restart the service:
+   ```bash
+   sudo systemctl restart garage
+   ```
+
+### Configuration Changes Not Applied
+
+After modifying the service file:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart garage
+```
+
+### Port Conflicts
+
+If ports are already in use, check what's using them:
+
+```bash
+# Check port 3900 (S3 API)
+sudo netstat -tulpn | grep 3900
+
+# Check port 3901 (RPC)
+sudo netstat -tulpn | grep 3901
+```
+
+## Alternative: Using with Socket Activation
+
+For advanced use cases, you can configure socket activation:
+
+```toml
+# /etc/systemd/system/garage.socket
+[Unit]
+Description=Garage Socket
+
+[Socket]
+ListenStream=3900
+ListenStream=3901
+
+[Install]
+WantedBy=sockets.target
+```
+
+Modify the service file:
+
+```toml
+[Unit]
+Requires=garage.socket
+After=garage.socket
+```
+
+Enable and start:
+
+```bash
+sudo systemctl enable garage.socket
+sudo systemctl start garage.socket
+```
+
+## Next Steps
+
+- Configure [multi-node cluster](/deployment/multi-node) with systemd services
+- Set up [monitoring](/operations/monitoring) with systemd integration
+- Configure [reverse proxy](/advanced/reverse-proxy) for external access
+- Learn about [backup strategies](/operations/recovering) for systemd deployments

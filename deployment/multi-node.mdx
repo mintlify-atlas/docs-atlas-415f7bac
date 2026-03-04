@@ -1,0 +1,401 @@
+---
+title: "Multi-Node Cluster Deployment"
+description: "Deploy Garage as a distributed cluster with data replication"
+---
+
+This guide explains how to deploy Garage as a multi-node cluster with data replication. This is the recommended setup for production environments, providing high availability and fault tolerance.
+
+## Overview
+
+A production Garage cluster requires at least 3 nodes to enable three-way replication, the safest and most available mode. This ensures your data remains accessible even if one node fails.
+
+## Prerequisites
+
+Before deploying a multi-node cluster:
+
+- At least 3 machines with sufficient storage space
+- Direct IP connectivity between all nodes (IPv4 or IPv6)
+- For nodes behind NAT, consider:
+  - IPv6 for end-to-end connectivity
+  - Mesh VPN like [Nebula](https://github.com/slackhq/nebula) or [Yggdrasil](https://yggdrasil-network.github.io/)
+
+## Architecture Planning
+
+### Sample Infrastructure
+
+Consider this example cluster layout:
+
+| Location | Name    | IP Address | Disk Space | Zone   | Capacity |
+|----------|---------|------------|------------|--------|----------|
+| Paris    | Mercury | fc00:1::1  | 1 TB       | par1   | 1T       |
+| Paris    | Venus   | fc00:1::2  | 2 TB       | par1   | 2T       |
+| London   | Earth   | fc00:B::1  | 2 TB       | lon1   | 2T       |
+| Brussels | Mars    | fc00:F::1  | 1.5 TB     | bru1   | 1.5T     |
+
+<Note>
+  Garage stores three copies of data on nodes at different locations. In this example, the usable capacity is 1.5 TB (limited by Brussels).
+</Note>
+
+### Best Practices
+
+<AccordionGroup>
+  <Accordion title="Storage Configuration">
+    - **Metadata directory**: Store on SSD for fast access to frequently-used metadata
+    - **Data directory**: Store on HDD for large, slower storage
+    - **Multiple HDDs**: Supported natively without RAID
+  </Accordion>
+
+  <Accordion title="Filesystem Recommendations">
+    - **Data directory**: Use XFS for best performance (EXT4 has inode limitations)
+    - **Metadata directory**: Use BTRFS or ZFS for checksumming and integrity
+    - **Database engine**: LMDB (default) for performance, or SQLite for robustness
+  </Accordion>
+
+  <Accordion title="Performance Tuning">
+    - For fast networking and large files: Set `block_size = "10M"`
+    - Enable automatic snapshots: `metadata_auto_snapshot_interval = "6h"`
+    - Use compression: `compression_level = 2`
+  </Accordion>
+
+  <Accordion title="Capacity Planning">
+    - Balance capacity across zones for optimal utilization
+    - Garage replicates across zones, not just nodes
+    - Ensure similar capacity in each zone to avoid under-utilization
+  </Accordion>
+</AccordionGroup>
+
+## Installation
+
+### Get Docker Image
+
+Pull the Garage Docker image on each node:
+
+```bash
+docker pull dxflrs/garage:v2.2.0
+```
+
+<Note>
+  Always use a fixed version tag (e.g., `v2.2.0`) instead of `latest` for production deployments.
+</Note>
+
+### Directory Structure
+
+Create the following directories on each node:
+
+```bash
+sudo mkdir -p /etc/garage
+sudo mkdir -p /var/lib/garage/meta
+sudo mkdir -p /var/lib/garage/data
+```
+
+## Configuration
+
+<Steps>
+  <Step title="Generate RPC Secret">
+    Generate a shared secret for secure node communication:
+
+    ```bash
+    openssl rand -hex 32
+    ```
+
+    Use the same value for all nodes in the cluster.
+  </Step>
+
+  <Step title="Create Configuration File">
+    Create `/etc/garage.toml` on each node with the following template:
+
+    ```toml
+    metadata_dir = "/var/lib/garage/meta"
+    data_dir = "/var/lib/garage/data"
+    db_engine = "lmdb"
+    metadata_auto_snapshot_interval = "6h"
+
+    replication_factor = 3
+
+    compression_level = 2
+
+    rpc_bind_addr = "[::]:3901"
+    rpc_public_addr = "<this node's public IP>:3901"
+    rpc_secret = "<RPC secret>"
+
+    [s3_api]
+    s3_region = "garage"
+    api_bind_addr = "[::]:3900"
+    root_domain = ".s3.garage"
+
+    [s3_web]
+    bind_addr = "[::]:3902"
+    root_domain = ".web.garage"
+    index = "index.html"
+    ```
+
+    <Warning>
+      - Replace `<this node's public IP>` with each node's actual IP address
+      - Use the same `rpc_secret` on all nodes
+      - Adjust `replication_factor` based on your cluster size (3 is recommended)
+    </Warning>
+  </Step>
+</Steps>
+
+## Starting Nodes
+
+### Using Docker
+
+Start Garage on each node:
+
+```bash
+docker run \
+  -d \
+  --name garaged \
+  --restart always \
+  --network host \
+  -v /etc/garage.toml:/etc/garage.toml \
+  -v /var/lib/garage/meta:/var/lib/garage/meta \
+  -v /var/lib/garage/data:/var/lib/garage/data \
+  dxflrs/garage:v2.2.0
+```
+
+<Note>
+  Using `--network host` allows direct node-to-node communication, especially important for IPv6.
+</Note>
+
+### Using Docker Compose
+
+Alternatively, create a `docker-compose.yml` file:
+
+```yaml
+version: "3"
+services:
+  garage:
+    image: dxflrs/garage:v2.2.0
+    network_mode: "host"
+    restart: unless-stopped
+    volumes:
+      - /etc/garage.toml:/etc/garage.toml
+      - /var/lib/garage/meta:/var/lib/garage/meta
+      - /var/lib/garage/data:/var/lib/garage/data
+```
+
+Start with:
+
+```bash
+docker-compose up -d
+```
+
+## Cluster Formation
+
+<Steps>
+  <Step title="Verify Nodes are Running">
+    On each node, check that Garage is running:
+
+    ```bash
+    docker exec garaged /garage status
+    ```
+
+    Or create an alias:
+
+    ```bash
+    alias garage="docker exec -ti garaged /garage"
+    garage status
+    ```
+
+    Initially, each node will show `NO ROLE ASSIGNED`.
+  </Step>
+
+  <Step title="Get Node Identifiers">
+    On each node, get its unique identifier:
+
+    ```bash
+    # Mercury
+    garage node id
+    # Output: 563e1ac825ee3323aa441e72c26d1030d6d4414aeb3dd25287c531e7fc2bc95d@[fc00:1::1]:3901
+
+    # Venus
+    garage node id
+    # Output: 86f0f26ae4afbd59aaf9cfb059eefac844951efd5b8caeec0d53f4ed6c85f332@[fc00:1::2]:3901
+
+    # Earth
+    garage node id
+    # Output: 68143d720f20c89d...
+
+    # Mars
+    garage node id
+    # Output: 212f7572f0c89da9...
+    ```
+  </Step>
+
+  <Step title="Connect Nodes Together">
+    From any node, connect to the other nodes:
+
+    ```bash
+    # From Venus, connect to Mercury
+    garage node connect 563e1ac825ee3323aa441e72c26d1030d6d4414aeb3dd25287c531e7fc2bc95d@[fc00:1::1]:3901
+
+    # Connect to other nodes
+    garage node connect 68143d720f20c89d...@[fc00:B::1]:3901
+    garage node connect 212f7572f0c89da9...@[fc00:F::1]:3901
+    ```
+
+    <Note>
+      You don't need to connect every node to every other node. Nodes discover each other transitively.
+    </Note>
+  </Step>
+
+  <Step title="Verify Cluster Connectivity">
+    Run `garage status` on any node:
+
+    ```bash
+    garage status
+    ```
+
+    You should see all nodes listed:
+
+    ```
+    ==== HEALTHY NODES ====
+    ID                  Hostname  Address           Tag                   Zone  Capacity
+    563e1ac825ee3323…   Mercury   [fc00:1::1]:3901  NO ROLE ASSIGNED
+    86f0f26ae4afbd59…   Venus     [fc00:1::2]:3901  NO ROLE ASSIGNED
+    68143d720f20c89d…   Earth     [fc00:B::1]:3901  NO ROLE ASSIGNED
+    212f7572f0c89da9…   Mars      [fc00:F::1]:3901  NO ROLE ASSIGNED
+    ```
+  </Step>
+</Steps>
+
+## Configuring Cluster Layout
+
+<Steps>
+  <Step title="Assign Node Roles">
+    Assign capacity, zone, and tags to each node:
+
+    ```bash
+    garage layout assign 563e -z par1 -c 1T -t mercury
+    garage layout assign 86f0 -z par1 -c 2T -t venus
+    garage layout assign 6814 -z lon1 -c 2T -t earth
+    garage layout assign 212f -z bru1 -c 1.5T -t mars
+    ```
+
+    **Parameters:**
+    - `-z`: Zone identifier (e.g., datacenter location)
+    - `-c`: Storage capacity available to Garage
+    - `-t`: Optional tags for node identification
+  </Step>
+
+  <Step title="Review Layout">
+    Review the proposed layout:
+
+    ```bash
+    garage layout show
+    ```
+
+    Carefully check the output before applying.
+  </Step>
+
+  <Step title="Apply Layout">
+    Apply the cluster layout:
+
+    ```bash
+    garage layout apply
+    ```
+
+    Garage will start rebalancing data across the cluster.
+  </Step>
+</Steps>
+
+## Managing the Cluster
+
+### Creating Buckets and Keys
+
+```bash
+# Create a bucket
+garage bucket create my-bucket
+
+# Create an API key
+garage key create my-app-key
+
+# Grant permissions
+garage bucket allow --read --write --owner my-bucket --key my-app-key
+```
+
+### Monitoring
+
+```bash
+# Check cluster status
+garage status
+
+# View cluster layout
+garage layout show
+
+# List buckets
+garage bucket list
+
+# List keys
+garage key list
+```
+
+## Upgrading
+
+<Warning>
+  Always read the upgrade documentation for your specific version before upgrading. Major version upgrades may require additional steps.
+</Warning>
+
+To upgrade a node:
+
+```bash
+# Stop the container
+docker stop garaged
+docker rm garaged
+
+# Pull new version
+docker pull dxflrs/garage:v2.3.0
+
+# Start with new version
+docker run \
+  -d \
+  --name garaged \
+  --restart always \
+  --network host \
+  -v /etc/garage.toml:/etc/garage.toml \
+  -v /var/lib/garage/meta:/var/lib/garage/meta \
+  -v /var/lib/garage/data:/var/lib/garage/data \
+  dxflrs/garage:v2.3.0
+```
+
+Upgrade nodes one at a time, waiting for the cluster to stabilize between upgrades.
+
+## Troubleshooting
+
+### Nodes Cannot Connect
+
+- Verify firewall rules allow port 3901 (RPC)
+- Check `rpc_public_addr` is set correctly on all nodes
+- Ensure all nodes use the same `rpc_secret`
+
+### Layout Changes Not Taking Effect
+
+```bash
+# Check if layout changes are staged
+garage layout show
+
+# Apply staged changes
+garage layout apply
+```
+
+### Checking Logs
+
+```bash
+# View container logs
+docker logs garaged
+
+# Follow logs
+docker logs -f garaged
+
+# With increased verbosity
+docker exec garaged /garage server # with RUST_LOG=garage=debug
+```
+
+## Next Steps
+
+- Configure [systemd service](/deployment/systemd) for non-Docker deployments
+- Set up [monitoring](/cookbook/monitoring) for your cluster
+- Configure [reverse proxy](/advanced/reverse-proxy) for external access
+- Learn about [Kubernetes deployment](/deployment/kubernetes)

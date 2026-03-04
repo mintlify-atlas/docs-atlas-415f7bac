@@ -1,0 +1,156 @@
+---
+title: K2V API Overview
+description: Understanding Garage's K2V (Key/Key/Value) storage API
+---
+
+<Warning>
+K2V is an optional feature that must be enabled at compile time using the `k2v` feature flag. Standard Garage builds do not include K2V support. Special builds with K2V enabled can be identified by the `-k2v` suffix in their tag name (e.g., `v0.7.2-k2v`).
+</Warning>
+
+## What is K2V?
+
+K2V (Key/Key/Value) is an alternative storage API designed to efficiently store many small values in buckets, in contrast to S3 which is optimized for storing large blobs. K2V stores triplets of the form `(partition key, sort key, value)`.
+
+## Key Characteristics
+
+### Data Model
+
+K2V stores triplets consisting of:
+
+- **Partition Key** (`pk`): A UTF-8 string that defines which partition the triplet is stored in. Triplets in different partitions cannot be listed or deleted together in batch operations.
+- **Sort Key** (`sk`): A UTF-8 string that defines the index of the triplet within its partition. Triplets are uniquely identified by their partition key + sort key combination.
+- **Value** (`v`): An opaque binary blob associated with the partition key + sort key. Values are transmitted as binary when possible, but are typically represented as base64-encoded strings in JSON responses. A value can also be `null` to indicate a deleted triplet (tombstone).
+
+### Buckets and Access
+
+- Triplets are stored in buckets, with each bucket maintaining a separate set of triplets
+- Bucket names and access keys are the same as for the S3 API
+- K2V triplets exist separately from S3 objects - they are completely independent storage systems
+
+### Causality and Conflict Resolution
+
+K2V implements sophisticated causality tracking based on **DVVS (Dotted Version Vector Sets)**, which enables:
+
+- **Concurrent write detection**: Garage can detect when multiple writes occur concurrently
+- **Automatic conflict preservation**: When concurrent writes are detected, all conflicting values are kept until a subsequent write supersedes them
+- **Causality tokens**: Clients receive causality tokens with read responses, which must be provided on writes to indicate causal relationships
+
+This approach is similar to Riak KV's conflict resolution strategy.
+
+#### How Causality Works
+
+1. **Reading values**: When you read an item, you receive a causality token along with the value(s)
+2. **Writing values**: To supersede previous values, include the causality token in the `X-Garage-Causality-Token` header
+3. **Concurrent writes**: If you write without a causality token (or with an outdated one), your write will not overwrite existing values - it creates a concurrent value instead
+4. **Conflict resolution**: When conflicts exist, all concurrent values are returned on read operations
+
+### Indexing
+
+K2V maintains an asynchronous index that tracks:
+
+- Number of triplets per partition key
+- Total number of values (accounting for conflicts)
+- Total bytes of values
+- Number of triplets in conflict state
+
+The index allows efficient listing of all partition keys in a bucket, though the counts are eventually consistent.
+
+## Use Cases
+
+K2V is ideal for scenarios requiring:
+
+- Storage of many small values (metadata, configuration, state)
+- Efficient key-value lookups within partitions
+- Range queries and prefix-based filtering
+- Real-time updates with polling capabilities
+- Applications that need to handle concurrent updates gracefully
+
+### Example Use Cases
+
+- **Email system metadata**: Store mailbox structures, message indices, and flags
+- **Application state**: Store user preferences, session data, and configuration
+- **Distributed coordination**: Store lock information, membership lists, and cluster state
+- **Time-series data**: Use sort keys for timestamps, partition keys for entity IDs
+
+## Authentication
+
+The K2V API uses **AWSv4 signatures** for authentication, identical to the S3 API:
+
+- Use the same access keys and secret keys as your S3 API
+- The AWS region for signature calculation matches your S3 API configuration
+- All requests must include proper AWS Signature Version 4 headers
+
+## Enabling K2V
+
+### Download K2V-Enabled Build
+
+Download a special build with the `k2v` feature flag enabled from the Garage downloads page (look for builds tagged with `-k2v`).
+
+### Configuration
+
+Add the following to your `garage.toml` configuration file:
+
+```toml
+[k2v_api]
+api_bind_addr = "<ip>:<port>"
+```
+
+Ensure the port number doesn't conflict with other API endpoints (S3 API, Admin API) or the RPC server.
+
+## Client Libraries
+
+### Rust Client
+
+An early-stage K2V client library is available for Rust:
+
+```toml
+[dependencies]
+k2v-client = { git = "https://git.deuxfleurs.fr/Deuxfleurs/garage.git" }
+```
+
+### CLI Utility
+
+A command-line utility for testing and development:
+
+```bash
+git clone https://git.deuxfleurs.fr/Deuxfleurs/garage.git
+cd garage/src/k2v-client
+cargo build --features cli --bin k2v-cli
+```
+
+Run `k2v-cli --help` for usage instructions.
+
+## Important Considerations
+
+<Warning>
+**Internal server errors do not mean updates aren't stored.** K2V returns an internal server error when it cannot reach a quorum of nodes. However, the value may still be stored on one node and will propagate asynchronously via anti-entropy.
+</Warning>
+
+<Warning>
+**Batch operations are not transactions.** `InsertBatch` and `DeleteBatch` operations may partially complete. If these operations return an error, some items may be inserted/deleted while others retain their old values.
+</Warning>
+
+<Note>
+**Concurrent values are deduplicated.** If the same value is inserted multiple times concurrently (either by user action or internal retries), duplicate concurrent values are automatically deduplicated when items are read.
+</Note>
+
+## API Overview
+
+The K2V API provides several categories of operations:
+
+### Single Item Operations
+- `ReadItem` - Read a single item by partition key and sort key
+- `InsertItem` - Insert or update a single item
+- `DeleteItem` - Delete a single item
+- `PollItem` - Wait for changes to a single item
+
+### Batch Operations
+- `ReadBatch` - Read multiple items across sort keys
+- `InsertBatch` - Insert/update multiple items in one request
+- `DeleteBatch` - Delete multiple items matching criteria
+- `PollRange` - Wait for changes to items in a range
+
+### Index Operations
+- `ReadIndex` - List partition keys and get aggregate statistics
+
+See [K2V Operations](/api/k2v/operations) for detailed endpoint documentation.

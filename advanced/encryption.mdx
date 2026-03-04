@@ -1,0 +1,196 @@
+---
+title: Encryption
+description: Understanding encryption options and security features in Garage
+---
+
+Encryption is a critical security consideration for object storage. While Garage does not handle all encryption internally, it provides multiple layers of security and supports various encryption strategies.
+
+## Understanding Your Encryption Needs
+
+Before implementing encryption, consider:
+
+- **Why do you want encryption?** - Compliance, security, privacy?
+- **What is your threat model?**
+  - Stolen hard drive?
+  - Curious administrator?
+  - Malicious administrator?
+  - Remote attacker?
+- **What services need protection?** - Existing applications like Nextcloud, or custom applications?
+
+Garage provides building blocks for encryption at different layers, allowing you to implement the right security model for your use case.
+
+## Built-in Security Features
+
+### Encrypted Inter-Node Communication
+
+All RPC communication between Garage nodes is encrypted by default. Garage uses the [kuska handshake](https://github.com/Kuska-ssb/handshake) library implementing Secure ScuttleButt's Secret Handshake protocol.
+
+**Key characteristics:**
+- Clear-text RPC is impossible in Garage
+- The `rpc_secret` configuration parameter is mandatory
+- Node identifiers are derived from encryption keys
+
+This ensures that cluster communication is always secure, even over untrusted networks.
+
+### HTTP Endpoints (Unencrypted)
+
+Garage's HTTP API endpoints (S3 API, web endpoint, admin API) serve traffic in clear text. TLS support is not built into Garage.
+
+**Recommended approach:** Use a reverse proxy to provide TLS termination. See the [Reverse Proxy Configuration](/advanced/reverse-proxy) guide for details.
+
+## Data-at-Rest Encryption
+
+### Plain Text Storage (Default)
+
+By default, Garage stores data blocks in plain text on the filesystem. This is suitable when:
+- Physical security is assured
+- Full-disk encryption is used
+- You trust all system administrators
+
+### SSE-C (Server-Side Encryption with Customer Keys)
+
+Garage supports [SSE-C encryption](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerSideEncryptionCustomerKeys.html), an S3 encryption mode where:
+
+1. Client provides encryption key in request headers
+2. Garage encrypts/decrypts data using the provided key
+3. Garage discards the key immediately after use
+
+**Example with AWS CLI:**
+```bash
+# Upload with SSE-C
+aws s3 cp file.txt s3://my-bucket/ \
+  --sse-c AES256 \
+  --sse-c-key fileb://my-encryption-key.bin
+
+# Download with SSE-C
+aws s3 cp s3://my-bucket/file.txt . \
+  --sse-c AES256 \
+  --sse-c-key fileb://my-encryption-key.bin
+```
+
+**Security considerations:**
+- Only the gateway node receiving the request knows the encryption key
+- Data is encrypted at rest on all storage nodes
+- Requires client application support
+- Not suitable if you assume the server is compromised (keys pass through server memory)
+- Ideal for untrusted storage nodes when using trusted gateway nodes
+
+<Warning>
+SSE-C encryption keys are transmitted to the server in each request. This mode does not protect against a compromised or malicious Garage node that receives your requests.
+</Warning>
+
+### Full-Disk Encryption
+
+For protection against physical theft, use full-disk encryption with LUKS or similar tools:
+
+```bash
+# Create encrypted volume
+sudo cryptsetup luksFormat /dev/sdb
+sudo cryptsetup luksOpen /dev/sdb garage-data
+sudo mkfs.ext4 /dev/mapper/garage-data
+```
+
+**Protects against:**
+- Stolen hard drives
+- Physical access to decommissioned hardware
+
+**Does not protect against:**
+- Malicious system administrators
+- Remote attackers with system access
+- Running system compromise
+
+## Client-Side Encryption
+
+For maximum security, encrypt data before sending it to Garage.
+
+### Protection Level
+
+Client-side encryption protects against:
+- Honest-but-curious administrators
+- Malicious administrators attempting to corrupt data
+- Remote attackers who gain access to storage servers
+- Compromised Garage nodes
+
+### Implementation Examples
+
+#### Cryptomator (Cyberduck)
+
+[Cyberduck](https://cyberduck.io/) supports [Cryptomator](https://docs.cyberduck.io/cryptomator/) vaults for client-side encryption:
+
+1. Create a Cryptomator vault in your S3 bucket
+2. All files are encrypted before upload
+3. Transparent decryption on download
+
+#### Matrix
+
+Matrix uses the OLM protocol for E2EE:
+- User messages: End-to-end encrypted
+- Media files: Encrypted with symmetric keys distributed through encrypted messages
+
+#### XMPP
+
+XMPP clients support OMEMO/OpenPGP for messages and [XEP-0454](https://xmpp.org/extensions/xep-0454.html) for media file encryption.
+
+#### Aerogramme
+
+Aerogramme (email server) uses the user's password as a key to decrypt bucket data, providing transparent encryption for email storage.
+
+### Custom Application Encryption
+
+When developing applications that use Garage:
+
+```python
+# Example: Encrypt before upload
+import boto3
+from cryptography.fernet import Fernet
+
+# Generate or load encryption key
+key = Fernet.generate_key()
+cipher = Fernet(key)
+
+# Encrypt data
+data = b"sensitive information"
+encrypted_data = cipher.encrypt(data)
+
+# Upload to Garage
+s3 = boto3.client('s3', endpoint_url='https://s3.garage.tld')
+s3.put_object(Bucket='my-bucket', Key='encrypted-file', Body=encrypted_data)
+
+# Download and decrypt
+response = s3.get_object(Bucket='my-bucket', Key='encrypted-file')
+encrypted_data = response['Body'].read()
+data = cipher.decrypt(encrypted_data)
+```
+
+**Best practices:**
+- Never transmit plaintext data to Garage
+- Manage encryption keys separately from stored data
+- Use established encryption libraries (don't roll your own crypto)
+- Consider key rotation strategies
+
+## Encryption Strategy Comparison
+
+| Method | Protects Against | Performance Impact | Client Support Required |
+|--------|-----------------|-------------------|------------------------|
+| **Inter-node RPC** | Network eavesdropping | Minimal | None (built-in) |
+| **Reverse Proxy TLS** | Client-to-server eavesdropping | Low | None (standard HTTPS) |
+| **Full-Disk Encryption** | Physical theft | Low | None |
+| **SSE-C** | Data at rest | Low-Medium | Yes (SSE-C support) |
+| **Client-Side Encryption** | All server threats | Medium | Yes (custom implementation) |
+
+## Recommendations
+
+For most deployments:
+
+1. **Always use**: TLS reverse proxy for client connections
+2. **Highly recommended**: Full-disk encryption (LUKS) on storage nodes
+3. **For sensitive data**: Client-side encryption in your application
+4. **For untrusted storage**: SSE-C if client-side encryption isn't feasible
+
+<Warning>
+Garage does not currently support SSE-S3 (server-managed encryption keys). This would require secure key management within Garage, which is not planned for implementation.
+</Warning>
+
+## Feedback and Discussion
+
+The Garage team is very interested in encryption use cases and practices. If you have thoughts on encryption features, key management, or security requirements, please join the discussion on our community channels.

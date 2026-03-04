@@ -1,0 +1,617 @@
+---
+title: Configuration File Format
+description: Complete reference for Garage configuration file options
+---
+
+# Configuration File Format
+
+Garage uses a TOML configuration file to define its behavior. This page documents all available configuration options.
+
+## Configuration File Location
+
+The configuration file path is specified when starting Garage:
+
+```bash
+garage -c /etc/garage.toml server
+```
+
+## Full Configuration Example
+
+Here is a complete example showing all available options:
+
+```toml
+replication_factor = 3
+consistency_mode = "consistent"
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+metadata_snapshots_dir = "/var/lib/garage/snapshots"
+metadata_fsync = true
+data_fsync = false
+disable_scrub = false
+use_local_tz = false
+metadata_auto_snapshot_interval = "6h"
+
+db_engine = "lmdb"
+
+block_size = "1M"
+block_ram_buffer_max = "256MiB"
+block_max_concurrent_reads = 16
+block_max_concurrent_writes_per_request = 10
+lmdb_map_size = "1T"
+
+compression_level = 1
+
+rpc_secret = "4425f5c26c5e11581d3223904324dcb5b5d5dfb14e5e7f35e38c595424f5f1e6"
+rpc_bind_addr = "[::]:3901"
+rpc_bind_outgoing = false
+rpc_public_addr = "[fc00:1::1]:3901"
+# or use rpc_public_addr_subnet to filter autodiscovery:
+# rpc_public_addr_subnet = "2001:0db8:f00:b00:/64"
+
+allow_world_readable_secrets = false
+
+bootstrap_peers = [
+    "563e1ac825ee3323aa441e72c26d1030d6d4414aeb3dd25287c531e7fc2bc95d@[fc00:1::1]:3901",
+    "86f0f26ae4afbd59aaf9cfb059eefac844951efd5b8caeec0d53f4ed6c85f332@[fc00:1::2]:3901",
+]
+
+allow_punycode = false
+
+[consul_discovery]
+api = "catalog"
+consul_http_addr = "https://127.0.0.1:8500"
+tls_skip_verify = false
+service_name = "garage-daemon"
+ca_cert = "/etc/consul/consul-ca.crt"
+client_cert = "/etc/consul/consul-client.crt"
+client_key = "/etc/consul/consul-key.crt"
+tags = [ "dns-enabled" ]
+meta = { dns-acl = "allow trusted" }
+datacenters = ["dc1", "dc2", "dc3"]
+
+[kubernetes_discovery]
+namespace = "garage"
+service_name = "garage-daemon"
+skip_crd = false
+
+[s3_api]
+api_bind_addr = "[::]:3900"
+s3_region = "garage"
+root_domain = ".s3.garage"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage"
+add_host_to_metrics = true
+
+[admin]
+api_bind_addr = "0.0.0.0:3903"
+metrics_token = "BCAdFjoa9G0KJR0WXnHHm7fs1ZAbfpI8iIZ+Z/a2NgI="
+metrics_require_token = true
+admin_token = "UkLeGWEvHnXBqnueR3ISEMWpOnm40jH2tM2HnnL/0F4="
+trace_sink = "http://localhost:4317"
+```
+
+## Top-Level Configuration Options
+
+### Replication and Consistency
+
+<ParamField path="replication_factor" type="integer" required>
+  Number of copies of data to store across the cluster. Must be a positive integer ≤ node count.
+  
+  **Recommendations:**
+  - `1`: Single node, no redundancy (testing only)
+  - `2`: Tolerates one node failure, read-only mode when one node is down
+  - `3`: Recommended - tolerates two node failures, maintains read/write with one failure
+  - `5`, `7`, etc.: Higher fault tolerance with uneven numbers preferred
+  
+  **Important:** All nodes must have the same `replication_factor`. Changing this requires deleting the cluster layout and rebalancing all data.
+</ParamField>
+
+<ParamField path="consistency_mode" type="string" default="consistent">
+  Controls read and write quorum behavior.
+  
+  **Options:**
+  - `consistent`: Default. Guarantees read-after-write consistency
+  - `degraded`: Lowers read quorum to 1. Allows reads when multiple nodes are down, but no read-after-write consistency
+  - `dangerous`: Lowers both read and write quorums to 1. Least consistent mode, use with extreme caution
+</ParamField>
+
+### Storage Directories
+
+<ParamField path="metadata_dir" type="string" required>
+  Directory for storing metadata (node ID, network config, peer list, bucket/key info, object indexes).
+  
+  **Recommendation:** Use fast SSD storage for best performance.
+  
+  ```toml
+  metadata_dir = "/var/lib/garage/meta"
+  ```
+</ParamField>
+
+<ParamField path="data_dir" type="string | array" required>
+  Directory for storing data blocks. Can be a single path or multiple paths with attributes.
+  
+  **Single directory:**
+  ```toml
+  data_dir = "/var/lib/garage/data"
+  ```
+  
+  **Multiple directories (since v0.9.0):**
+  ```toml
+  data_dir = [
+      { path = "/path/to/old_data", read_only = true },
+      { path = "/path/to/new_hdd1", capacity = "2T" },
+      { path = "/path/to/new_hdd2", capacity = "4T" },
+  ]
+  ```
+</ParamField>
+
+<ParamField path="metadata_snapshots_dir" type="string">
+  Directory for metadata snapshots. By default, snapshots are stored in `<metadata_dir>/snapshots/`.
+  
+  Set this to a location with more space if snapshots fill your metadata storage.
+  
+  ```toml
+  metadata_snapshots_dir = "/var/lib/garage/snapshots"
+  ```
+</ParamField>
+
+### Database Configuration
+
+<ParamField path="db_engine" type="string" default="lmdb">
+  Database engine for metadata storage.
+  
+  **Options:**
+  - `lmdb`: Recommended for high-performance clusters (default since v0.9.0)
+  - `sqlite`: Alternative backend, slower but more portable
+  - `fjall`: Experimental LSM-tree based engine (testing only)
+  
+  **LMDB Notes:**
+  - Prone to corruption after unclean shutdown (use `metadata_auto_snapshot_interval`)
+  - Database format not portable between architectures
+  - Not recommended for 32-bit systems
+  - Keys limited to 511 bytes (affects S3 object keys)
+</ParamField>
+
+<ParamField path="lmdb_map_size" type="string">
+  Maximum size for LMDB database. This is virtual memory mapping size, not physical RAM.
+  
+  **Defaults:**
+  - 1GiB on 32-bit systems
+  - 1TiB on 64-bit systems
+  
+  ```toml
+  lmdb_map_size = "1T"
+  ```
+</ParamField>
+
+### Data Integrity and Durability
+
+<ParamField path="metadata_fsync" type="boolean" default="false">
+  Enable synchronous writes for metadata database. Reduces corruption risk during power failures but significantly impacts write performance.
+  
+  **Impact by database engine:**
+  - SQLite: `PRAGMA synchronous = NORMAL` (vs `OFF`)
+  - LMDB: `MDB_NOMETASYNC` only (vs `MDB_NOMETASYNC` + `MDB_NOSYNC`)
+  - Fjall: Not supported
+  
+  Not usually necessary with multi-site replication.
+</ParamField>
+
+<ParamField path="data_fsync" type="boolean" default="false">
+  Call `fsync()` after writing data blocks to disk. Moderately impacts write performance.
+  
+  Reduces risk of data loss during simultaneous power failures on multiple nodes.
+</ParamField>
+
+<ParamField path="disable_scrub" type="boolean" default="false">
+  Disable automatic monthly data scrubbing. Garage normally reads all data files to verify integrity and rebuilds corrupted files.
+  
+  Set to `true` if scrubbing at filesystem level. If you find corrupted files, delete them and run `garage repair blocks`.
+</ParamField>
+
+<ParamField path="metadata_auto_snapshot_interval" type="string">
+  Automatically snapshot metadata database at regular intervals. Accepts duration strings like `"6h"`, `"1d"`, etc.
+  
+  Garage keeps the two most recent snapshots. Snapshots enable recovery from metadata corruption.
+  
+  ```toml
+  metadata_auto_snapshot_interval = "6h"
+  ```
+  
+  **Note:** Snapshot operations are intensive and may impact performance during heavy write loads.
+</ParamField>
+
+### Block Storage Configuration
+
+<ParamField path="block_size" type="string" default="1M">
+  Size of data blocks for splitting stored objects. Accepts human-readable sizes.
+  
+  **Recommendations:**
+  - Default: `1M` (1 MiB)
+  - Fast networks (≥1 Gbps) with large files: `10M` or higher
+  
+  ```toml
+  block_size = "1M"
+  ```
+  
+  **Note:** Only affects newly uploaded files. Existing files remain accessible but won't deduplicate with new files.
+</ParamField>
+
+<ParamField path="block_ram_buffer_max" type="string" default="256MiB">
+  Maximum RAM for buffering data blocks awaiting asynchronous transfer to storage nodes.
+  
+  When limit is reached, backpressure is applied to S3 clients. This is not a hard limit on total RAM consumption.
+  
+  ```toml
+  block_ram_buffer_max = "256MiB"
+  ```
+</ParamField>
+
+<ParamField path="block_max_concurrent_reads" type="integer" default="16">
+  Maximum number of block files open simultaneously for reading (since v1.3.0/v2.1.0).
+  
+  Provides backpressure mechanism for HDD read speed. Requests wait up to 15 seconds for a read slot; timeouts indicate I/O bottleneck.
+  
+  Monitor `block_read_semaphore_timeouts` metric in Prometheus for timeout events.
+</ParamField>
+
+<ParamField path="block_max_concurrent_writes_per_request" type="integer" default="3">
+  Maximum parallel block writes per PUT request (since v1.3.1/v2.2.0).
+  
+  **Recommendations:**
+  - NVMe: 10-30
+  - HDD: 3-10
+  
+  Higher values improve throughput but increase memory usage.
+</ParamField>
+
+<ParamField path="compression_level" type="integer | string" default="1">
+  Zstd compression level for data blocks.
+  
+  **Values:**
+  - `-99` to `-1`: Fast compression (smaller file to faster compression)
+  - `0`: Zstd default (currently 3)
+  - `1` to `19`: Standard compression (faster to smaller)
+  - `20` to `22`: Ultra compression (high memory usage)
+  - `'none'`: Disable compression entirely
+  
+  Compression is synchronous and affects write latency. Values can differ between nodes.
+</ParamField>
+
+### RPC Configuration
+
+<ParamField path="rpc_secret" type="string" required>
+  32-byte hex-encoded secret shared by all cluster nodes for authentication.
+  
+  Generate with: `openssl rand -hex 32`
+  
+  Can also be set via `rpc_secret_file` or environment variables (see [Environment Variables](/cli/environment-variables)).
+  
+  ```toml
+  rpc_secret = "4425f5c26c5e11581d3223904324dcb5b5d5dfb14e5e7f35e38c595424f5f1e6"
+  ```
+</ParamField>
+
+<ParamField path="rpc_bind_addr" type="string" required>
+  Address and port for inter-cluster RPC communication.
+  
+  **Important:** Port must be consistent between internal and external addresses, even behind NAT. Multiple nodes behind NAT must use different ports.
+  
+  ```toml
+  rpc_bind_addr = "[::]:3901"
+  ```
+</ParamField>
+
+<ParamField path="rpc_public_addr" type="string">
+  Public address and port other nodes use to contact this node. Recommended but optional.
+  
+  Useful when behind NAT with port mapping.
+  
+  ```toml
+  rpc_public_addr = "[fc00:1::1]:3901"
+  ```
+</ParamField>
+
+<ParamField path="rpc_public_addr_subnet" type="string">
+  When `rpc_public_addr` is not set, filter autodiscovered IPs to specific subnet.
+  
+  ```toml
+  rpc_public_addr_subnet = "2001:0db8:f00:b00:/64"
+  ```
+</ParamField>
+
+<ParamField path="rpc_bind_outgoing" type="boolean" default="false">
+  Bind outgoing RPC connections to the same IP as `rpc_bind_addr` (since v0.9.2).
+  
+  Necessary when node has multiple IPs but only one can reach other nodes due to firewall or routing rules.
+</ParamField>
+
+### Cluster Discovery
+
+<ParamField path="bootstrap_peers" type="array" default="[]">
+  List of peer identifiers for initial cluster discovery.
+  
+  Format: `<node-public-key>@<ip-or-hostname>:<port>`
+  
+  ```toml
+  bootstrap_peers = [
+      "563e1ac825ee3323aa441e72c26d1030d6d4414aeb3dd25287c531e7fc2bc95d@[fc00:1::1]:3901",
+      "86f0f26ae4afbd59aaf9cfb059eefac844951efd5b8caeec0d53f4ed6c85f332@[fc00:1::2]:3901",
+  ]
+  ```
+  
+  Get node identifier with: `garage node id`
+</ParamField>
+
+### Security
+
+<ParamField path="allow_world_readable_secrets" type="boolean" default="false">
+  Bypass permission checks on secret files. Useful with POSIX ACLs or complex permissions.
+  
+  Can also be set via `GARAGE_ALLOW_WORLD_READABLE_SECRETS` environment variable.
+</ParamField>
+
+<ParamField path="allow_punycode" type="boolean" default="false">
+  Allow punycode in bucket names. Enables almost any Unicode character in website domain names.
+</ParamField>
+
+### Miscellaneous
+
+<ParamField path="use_local_tz" type="boolean" default="false">
+  Run lifecycle worker at midnight in local timezone instead of UTC (since v1.1.0).
+  
+  Ensure all nodes have the same timezone configuration.
+</ParamField>
+
+## Consul Discovery Configuration
+
+The `[consul_discovery]` section enables automatic node discovery via Consul. Nodes must have `rpc_public_addr` set.
+
+<ParamField path="consul_discovery.api" type="string" default="catalog">
+  Consul API to use for service registration.
+  
+  **Options:**
+  - `catalog`: Use `/v1/catalog` endpoints with optional mTLS
+  - `agent`: Use `/v1/agent` endpoints with optional token
+</ParamField>
+
+<ParamField path="consul_discovery.consul_http_addr" type="string" required>
+  Full HTTP(S) address of Consul server.
+  
+  ```toml
+  consul_http_addr = "https://127.0.0.1:8500"
+  ```
+</ParamField>
+
+<ParamField path="consul_discovery.service_name" type="string" required>
+  Service name under which Garage RPC ports are announced.
+  
+  ```toml
+  service_name = "garage-daemon"
+  ```
+</ParamField>
+
+<ParamField path="consul_discovery.ca_cert" type="string">
+  Path to CA certificate for TLS communication with Consul.
+  
+  ```toml
+  ca_cert = "/etc/consul/consul-ca.crt"
+  ```
+</ParamField>
+
+<ParamField path="consul_discovery.client_cert" type="string">
+  Path to client certificate for mTLS with Consul. Only available with `api = "catalog"`.
+  
+  Both `client_cert` and `client_key` must be provided.
+</ParamField>
+
+<ParamField path="consul_discovery.client_key" type="string">
+  Path to client key for mTLS with Consul. Only available with `api = "catalog"`.
+</ParamField>
+
+<ParamField path="consul_discovery.tls_skip_verify" type="boolean" default="false">
+  Skip TLS hostname verification. When enabled, `ca_cert` is ignored.
+</ParamField>
+
+<ParamField path="consul_discovery.token" type="string">
+  Authentication token for Consul. Only available with `api = "agent"`.
+  
+  Required policy:
+  ```hcl
+  service "garage" {
+    policy = "write"
+  }
+  service_prefix "" {
+    policy = "read"
+  }
+  node_prefix "" {
+    policy = "read"
+  }
+  ```
+</ParamField>
+
+<ParamField path="consul_discovery.tags" type="array" default="[]">
+  Additional tags for service registration.
+  
+  ```toml
+  tags = ["dns-enabled"]
+  ```
+</ParamField>
+
+<ParamField path="consul_discovery.meta" type="object">
+  Additional service metadata.
+  
+  ```toml
+  meta = { dns-acl = "allow trusted" }
+  ```
+</ParamField>
+
+<ParamField path="consul_discovery.datacenters" type="array" default="[]">
+  List of datacenters for service discovery in WAN federation.
+  
+  ```toml
+  datacenters = ["dc1", "dc2", "dc3"]
+  ```
+</ParamField>
+
+## Kubernetes Discovery Configuration
+
+The `[kubernetes_discovery]` section enables automatic node discovery via Kubernetes custom resources.
+
+<ParamField path="kubernetes_discovery.namespace" type="string" required>
+  Kubernetes namespace containing custom resources.
+  
+  ```toml
+  namespace = "garage"
+  ```
+</ParamField>
+
+<ParamField path="kubernetes_discovery.service_name" type="string" required>
+  Service name label for filtering resources (allows multiple deployments per namespace).
+  
+  ```toml
+  service_name = "garage-daemon"
+  ```
+</ParamField>
+
+<ParamField path="kubernetes_discovery.skip_crd" type="boolean" default="false">
+  Skip automatic creation/patching of `garagenodes.deuxfleurs.fr` CRD. You must create the CRD manually.
+</ParamField>
+
+## S3 API Configuration
+
+The `[s3_api]` section configures the S3-compatible API endpoint.
+
+<ParamField path="s3_api.api_bind_addr" type="string">
+  IP and port for S3 API. Can be a TCP address or Unix socket path (mode 0222).
+  
+  This endpoint does not support TLS; use a reverse proxy for HTTPS.
+  
+  ```toml
+  api_bind_addr = "[::]:3900"
+  # or Unix socket:
+  api_bind_addr = "/var/run/garage-s3.sock"
+  ```
+</ParamField>
+
+<ParamField path="s3_api.s3_region" type="string" required>
+  S3 region name. API calls for other regions fail with `AuthorizationHeaderMalformed`.
+  
+  ```toml
+  s3_region = "garage"
+  ```
+</ParamField>
+
+<ParamField path="s3_api.root_domain" type="string">
+  Domain suffix for vhost-style S3 requests. Requires wildcard DNS and optionally wildcard TLS certificate.
+  
+  Path-style requests always work regardless of this setting.
+  
+  ```toml
+  root_domain = ".s3.garage"
+  ```
+  
+  With this setting, bucket `my-bucket` is accessible at `my-bucket.s3.garage`.
+</ParamField>
+
+## S3 Web Configuration
+
+The `[s3_web]` section configures static website hosting from S3 buckets.
+
+<ParamField path="s3_web.bind_addr" type="string" required>
+  IP and port for web server. Can be TCP address or Unix socket path (mode 0222).
+  
+  This endpoint does not support TLS; use a reverse proxy for HTTPS.
+  
+  ```toml
+  bind_addr = "[::]:3902"
+  ```
+</ParamField>
+
+<ParamField path="s3_web.root_domain" type="string" required>
+  Domain suffix for website hosting.
+  
+  ```toml
+  root_domain = ".web.garage"
+  ```
+  
+  Bucket `deuxfleurs.fr` accessible at both:
+  - `deuxfleurs.fr.web.garage`
+  - `deuxfleurs.fr`
+</ParamField>
+
+<ParamField path="s3_web.add_host_to_metrics" type="boolean" default="false">
+  Include HTTP `Host` header in Prometheus metrics. Disabled by default to prevent cardinality explosion.
+</ParamField>
+
+## Admin API Configuration
+
+The `[admin]` section configures the administration and monitoring API.
+
+<ParamField path="admin.api_bind_addr" type="string">
+  IP and port for admin API. Can be TCP address or Unix socket path (mode 0220).
+  
+  ```toml
+  api_bind_addr = "0.0.0.0:3903"
+  ```
+</ParamField>
+
+<ParamField path="admin.admin_token" type="string">
+  Bearer token for admin API access (except metrics endpoint).
+  
+  Generate with: `openssl rand -base64 32`
+  
+  Can also be set via `admin_token_file` or environment variables (see [Environment Variables](/cli/environment-variables)).
+  
+  Since v2.0, additional tokens can be defined dynamically with expiration and scoped permissions. This token acts as full-scope, non-expiring token.
+</ParamField>
+
+<ParamField path="admin.metrics_token" type="string">
+  Bearer token for `/metrics` endpoint access.
+  
+  Generate with: `openssl rand -base64 32`
+  
+  If not set and `metrics_require_token` is `false`, metrics are accessible without authentication.
+  
+  Can also be set via `metrics_token_file` or environment variables (see [Environment Variables](/cli/environment-variables)).
+</ParamField>
+
+<ParamField path="admin.metrics_require_token" type="boolean" default="false">
+  Require authentication token for metrics endpoint (since v2.0.0).
+  
+  Valid tokens include `metrics_token` and dynamically defined admin tokens with `Metrics` scope.
+</ParamField>
+
+<ParamField path="admin.trace_sink" type="string">
+  OpenTelemetry collector address for distributed tracing.
+  
+  ```toml
+  trace_sink = "http://localhost:4317"
+  ```
+</ParamField>
+
+## Configuration File Conversion
+
+To convert metadata between database engines:
+
+```bash
+garage convert-db \
+  -a <input_engine> -i <input_db_path> \
+  -b <output_engine> -o <output_db_path>
+```
+
+**Example:**
+```bash
+garage convert-db \
+  -a sqlite -i /var/lib/garage/meta/db.sqlite \
+  -b lmdb -o /var/lib/garage/meta/db.lmdb/
+```
+
+## Related Resources
+
+- [Environment Variables](/cli/environment-variables) - Environment variable overrides and configuration
+- [Admin API Reference](/api-reference/admin-api) - Administration API endpoints
+- [Cluster Management](/operations/cluster-management) - Managing your Garage cluster

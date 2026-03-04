@@ -1,0 +1,579 @@
+---
+title: 'Monitoring and Metrics'
+description: 'Monitor your Garage cluster with Prometheus metrics and health indicators'
+---
+
+Garage exposes detailed metrics in Prometheus format, allowing you to monitor cluster health, performance, and resource usage.
+
+For information on setting up monitoring infrastructure, see the [Monitoring Cookbook](/operations/monitoring).
+
+## Accessing Metrics
+
+Metrics are available via the administration API endpoint:
+
+```bash
+curl http://localhost:3903/metrics
+```
+
+Or configure Prometheus to scrape this endpoint automatically.
+
+## Garage System Metrics
+
+### Version Information
+
+#### `garage_build_info` (counter)
+
+Exposes the Garage version running on each node.
+
+```prometheus
+garage_build_info{version="1.0"} 1
+```
+
+**Use cases:**
+- Verify all nodes run the same version
+- Track upgrade progress
+- Detect version mismatches
+
+### Configuration Metrics
+
+#### `garage_replication_factor` (counter)
+
+Exposes the configured replication factor.
+
+```prometheus
+garage_replication_factor 3
+```
+
+### Disk Space Metrics
+
+#### `garage_local_disk_avail` and `garage_local_disk_total` (gauge)
+
+Reports available and total disk space on each node, separately for data and metadata.
+
+```prometheus
+garage_local_disk_avail{volume="data"} 540341960704
+garage_local_disk_avail{volume="metadata"} 540341960704
+garage_local_disk_total{volume="data"} 763063566336
+garage_local_disk_total{volume="metadata"} 763063566336
+```
+
+**Alert recommendations:**
+- Alert when available space < 10% of total
+- Alert when metadata disk < 5GB available
+
+## Cluster Health Metrics
+
+### Overall Health
+
+#### `cluster_healthy` (gauge)
+
+Indicates whether all storage nodes are connected.
+
+```prometheus
+cluster_healthy 1  # All nodes connected
+cluster_healthy 0  # One or more nodes disconnected
+```
+
+<Warning>
+**Critical alert:** `cluster_healthy = 0` indicates a node is unreachable.
+</Warning>
+
+#### `cluster_available` (gauge)
+
+Indicates whether all requests can be served, even if some nodes are disconnected.
+
+```prometheus
+cluster_available 1  # Cluster can serve all requests
+cluster_available 0  # Cluster cannot serve some requests
+```
+
+<Warning>
+**Critical alert:** `cluster_available = 0` indicates potential data unavailability.
+</Warning>
+
+### Node Metrics
+
+#### `cluster_connected_nodes` (gauge)
+
+Number of nodes currently connected to the cluster.
+
+```prometheus
+cluster_connected_nodes 3
+```
+
+#### `cluster_known_nodes` (gauge)
+
+Number of nodes that have been seen at least once in the cluster.
+
+```prometheus
+cluster_known_nodes 3
+```
+
+<Note>
+If `cluster_connected_nodes < cluster_known_nodes`, some nodes are currently offline.
+</Note>
+
+#### `cluster_layout_node_connected` (gauge)
+
+Connection status for individual nodes in the cluster layout.
+
+```prometheus
+cluster_layout_node_connected{id="62b218d848e86a64",role_capacity="1000000000",role_gateway="0",role_zone="dc1"} 1
+cluster_layout_node_connected{id="a11c7cf18af29737",role_capacity="1000000000",role_gateway="0",role_zone="dc1"} 0
+```
+
+Values:
+- `1` = connected
+- `0` = disconnected
+
+#### `cluster_layout_node_disconnected_time` (gauge)
+
+Seconds since last connection to each node.
+
+```prometheus
+cluster_layout_node_disconnected_time{id="62b218d848e86a64",role_capacity="1000000000",role_gateway="0",role_zone="dc1"} 0
+cluster_layout_node_disconnected_time{id="a11c7cf18af29737",role_capacity="1000000000",role_gateway="0",role_zone="dc1"} 3600
+```
+
+**Alert recommendation:**
+- Alert if disconnected_time > 300 (5 minutes)
+
+### Storage and Partition Metrics
+
+#### `cluster_storage_nodes` (gauge)
+
+Number of storage nodes declared in the current layout.
+
+```prometheus
+cluster_storage_nodes 4
+```
+
+#### `cluster_storage_nodes_ok` (gauge)
+
+Number of storage nodes currently connected.
+
+```prometheus
+cluster_storage_nodes_ok 3
+```
+
+#### `cluster_partitions` (gauge)
+
+Total number of partitions in the layout (always 256).
+
+```prometheus
+cluster_partitions 256
+```
+
+#### `cluster_partitions_all_ok` (gauge)
+
+Number of partitions for which all storage nodes are connected.
+
+```prometheus
+cluster_partitions_all_ok 64
+```
+
+#### `cluster_partitions_quorum` (gauge)
+
+Number of partitions with enough connected nodes to serve all requests.
+
+```prometheus
+cluster_partitions_quorum 256
+```
+
+<Warning>
+If `cluster_partitions_quorum < cluster_partitions`, some data may be inaccessible.
+</Warning>
+
+## API Endpoint Metrics
+
+### Admin API
+
+#### `api_admin_request_counter` (counter)
+
+Counts requests to each admin API endpoint.
+
+```prometheus
+api_admin_request_counter{api_endpoint="Metrics"} 127041
+```
+
+#### `api_admin_request_duration` (histogram)
+
+Duration of admin API calls.
+
+```prometheus
+api_admin_request_duration_bucket{api_endpoint="Metrics",le="0.5"} 127041
+api_admin_request_duration_sum{api_endpoint="Metrics"} 605.250344830999
+api_admin_request_duration_count{api_endpoint="Metrics"} 127041
+```
+
+### S3 API
+
+#### `api_s3_request_counter` (counter)
+
+Counts requests to each S3 API endpoint.
+
+```prometheus
+api_s3_request_counter{api_endpoint="CreateMultipartUpload"} 1
+api_s3_request_counter{api_endpoint="GetObject"} 5234
+api_s3_request_counter{api_endpoint="PutObject"} 1821
+```
+
+#### `api_s3_error_counter` (counter)
+
+Counts S3 API errors by endpoint and status code.
+
+```prometheus
+api_s3_error_counter{api_endpoint="GetObject",status_code="404"} 39
+```
+
+**Alert recommendations:**
+- High rate of 500 errors indicates cluster issues
+- High rate of 404 errors may indicate application bugs
+
+#### `api_s3_request_duration` (histogram)
+
+Duration of S3 API calls.
+
+```prometheus
+api_s3_request_duration_bucket{api_endpoint="CreateMultipartUpload",le="0.5"} 1
+api_s3_request_duration_sum{api_endpoint="CreateMultipartUpload"} 0.046340762
+api_s3_request_duration_count{api_endpoint="CreateMultipartUpload"} 1
+```
+
+### K2V API
+
+Same metrics as S3 API but for the K2V endpoint:
+- `api_k2v_request_counter`
+- `api_k2v_error_counter`
+- `api_k2v_request_duration`
+
+## Web Endpoint Metrics
+
+### `web_request_counter` (counter)
+
+Number of requests to the web endpoint.
+
+```prometheus
+web_request_counter{method="GET"} 80
+```
+
+### `web_request_duration` (histogram)
+
+Duration of web endpoint requests.
+
+```prometheus
+web_request_duration_bucket{method="GET",le="0.5"} 80
+web_request_duration_sum{method="GET"} 1.0528433229999998
+web_request_duration_count{method="GET"} 80
+```
+
+### `web_error_counter` (counter)
+
+Web endpoint errors by method and status code.
+
+```prometheus
+web_error_counter{method="GET",status_code="404 Not Found"} 64
+```
+
+## Data Block Manager Metrics
+
+### I/O Metrics
+
+#### `block_bytes_read`, `block_bytes_written` (counter)
+
+Bytes read from and written to disk in the data storage directory.
+
+```prometheus
+block_bytes_read 120586322022
+block_bytes_written 3386618077
+```
+
+#### `block_read_duration`, `block_write_duration` (histogram)
+
+Duration of individual block read/write operations.
+
+```prometheus
+block_read_duration_bucket{le="0.5"} 169229
+block_read_duration_sum 2761.6902550310056
+block_read_duration_count 169240
+```
+
+**Alert recommendations:**
+- Alert if P95 read duration > 1s (slow disk)
+- Alert if P95 write duration > 5s (slow disk)
+
+### Memory Management
+
+#### `block_ram_buffer_free_kb` (gauge)
+
+Kibibytes available for buffering blocks to send to remote nodes.
+
+```prometheus
+block_ram_buffer_free_kb 219829
+```
+
+<Warning>
+When this drops to zero, backpressure is applied. If consistently low, consider increasing available memory or reducing write rate.
+</Warning>
+
+### Configuration
+
+#### `block_compression_level` (counter)
+
+Configured block compression level.
+
+```prometheus
+block_compression_level 3
+```
+
+### Block Operations
+
+#### `block_delete_counter` (counter)
+
+Number of data blocks deleted from storage.
+
+```prometheus
+block_delete_counter 122
+```
+
+### Resync Operations
+
+#### `block_resync_counter` (counter), `block_resync_duration` (histogram)
+
+Number and duration of block resync operations.
+
+```prometheus
+block_resync_counter 308897
+block_resync_duration_bucket{le="0.5"} 308892
+block_resync_duration_sum 139.64204196100016
+block_resync_duration_count 308897
+```
+
+#### `block_resync_queue_length` (gauge)
+
+Number of block hashes queued for resync.
+
+```prometheus
+block_resync_queue_length 0
+```
+
+<Note>
+Normal to be nonzero for long periods, especially after layout changes or node failures.
+</Note>
+
+#### `block_resync_errored_blocks` (gauge)
+
+Number of blocks that failed to resync on the last attempt.
+
+```prometheus
+block_resync_errored_blocks 0
+```
+
+<Warning>
+**THIS SHOULD BE ZERO OR FALL TO ZERO RAPIDLY IN A HEALTHY CLUSTER.**
+
+Persistent nonzero values indicate potential data loss. Investigate immediately with:
+```bash
+garage block list-errors
+```
+</Warning>
+
+## RPC Metrics
+
+### Request Metrics
+
+#### `rpc_netapp_request_counter` (counter)
+
+Number of RPC requests emitted between nodes.
+
+```prometheus
+rpc_request_counter{from="<this node>",rpc_endpoint="garage_block/manager.rs/Rpc",to="<remote node>"} 176
+```
+
+### Error Metrics
+
+#### `rpc_netapp_error_counter` (counter)
+
+Communication errors (usually due to disconnected nodes).
+
+```prometheus
+rpc_netapp_error_counter{from="<this node>",rpc_endpoint="garage_block/manager.rs/Rpc",to="<remote node>"} 354
+```
+
+#### `rpc_timeout_counter` (counter)
+
+Number of RPC timeouts.
+
+```prometheus
+rpc_timeout_counter{from="<this node>",rpc_endpoint="garage_rpc/membership.rs/SystemRpc",to="<remote node>"} 1
+```
+
+<Warning>
+**Should be close to zero in a healthy cluster.** High timeout rates indicate network issues or overloaded nodes.
+</Warning>
+
+### Duration Metrics
+
+#### `rpc_duration` (histogram)
+
+Duration of RPC calls between nodes.
+
+```prometheus
+rpc_duration_bucket{from="<this node>",rpc_endpoint="garage_block/manager.rs/Rpc",to="<remote node>",le="0.5"} 166
+rpc_duration_sum{from="<this node>",rpc_endpoint="garage_block/manager.rs/Rpc",to="<remote node>"} 35.172253716
+rpc_duration_count{from="<this node>",rpc_endpoint="garage_block/manager.rs/Rpc",to="<remote node>"} 174
+```
+
+## Metadata Table Metrics
+
+### Garbage Collection
+
+#### `table_gc_todo_queue_length` (gauge)
+
+Length of the garbage collection TODO queue for each table.
+
+```prometheus
+table_gc_todo_queue_length{table_name="block_ref"} 0
+```
+
+### Table Operations
+
+#### `table_get_request_counter` (counter), `table_get_request_duration` (histogram)
+
+Number and duration of get/get_range requests on each table.
+
+```prometheus
+table_get_request_counter{table_name="bucket_alias"} 315
+table_get_request_duration_bucket{table_name="bucket_alias",le="0.5"} 315
+table_get_request_duration_sum{table_name="bucket_alias"} 0.048509778000000024
+table_get_request_duration_count{table_name="bucket_alias"} 315
+```
+
+#### `table_put_request_counter` (counter), `table_put_request_duration` (histogram)
+
+Number and duration of insert/insert_many requests.
+
+```prometheus
+table_put_request_counter{table_name="block_ref"} 677
+table_put_request_duration_bucket{table_name="block_ref",le="0.5"} 677
+table_put_request_duration_sum{table_name="block_ref"} 61.617528636
+table_put_request_duration_count{table_name="block_ref"} 677
+```
+
+### Table Modifications
+
+#### `table_internal_delete_counter` (counter)
+
+Number of value deletions in the tree (due to GC or repartitioning).
+
+```prometheus
+table_internal_delete_counter{table_name="block_ref"} 2296
+```
+
+#### `table_internal_update_counter` (counter)
+
+Number of value updates (creation and modification).
+
+```prometheus
+table_internal_update_counter{table_name="block_ref"} 5996
+```
+
+### Merkle Tree
+
+#### `table_merkle_updater_todo_queue_length` (gauge)
+
+Merkle tree updater TODO queue length.
+
+```prometheus
+table_merkle_updater_todo_queue_length{table_name="block_ref"} 0
+```
+
+<Note>
+Should fall to zero rapidly. Persistent nonzero values during normal operation may indicate issues.
+</Note>
+
+### Synchronization
+
+#### `table_sync_items_received`, `table_sync_items_sent` (counter)
+
+Data items sent to/received from other nodes during resync.
+
+```prometheus
+table_sync_items_received{from="<remote node>",table_name="bucket_v2"} 3
+table_sync_items_sent{table_name="block_ref",to="<remote node>"} 2
+```
+
+## Example Prometheus Alerts
+
+```yaml
+groups:
+  - name: garage
+    interval: 60s
+    rules:
+      - alert: GarageClusterUnhealthy
+        expr: cluster_healthy == 0
+        for: 5m
+        annotations:
+          summary: "Garage cluster is unhealthy"
+          description: "One or more nodes are disconnected"
+
+      - alert: GarageClusterUnavailable
+        expr: cluster_available == 0
+        for: 1m
+        annotations:
+          summary: "Garage cluster is unavailable"
+          description: "Cluster cannot serve all requests"
+
+      - alert: GarageBlockResyncErrors
+        expr: block_resync_errored_blocks > 0
+        for: 15m
+        annotations:
+          summary: "Garage has block resync errors"
+          description: "{{ $value }} blocks failed to resync"
+
+      - alert: GarageDiskSpaceLow
+        expr: (garage_local_disk_avail / garage_local_disk_total) < 0.1
+        for: 10m
+        annotations:
+          summary: "Garage disk space low"
+          description: "Less than 10% disk space available"
+
+      - alert: GarageHighErrorRate
+        expr: rate(api_s3_error_counter{status_code=~"5.."}[5m]) > 10
+        annotations:
+          summary: "High S3 API error rate"
+          description: "More than 10 5xx errors per second"
+```
+
+## Best Practices
+
+1. **Monitor critical metrics:**
+   - `cluster_healthy` and `cluster_available`
+   - `block_resync_errored_blocks`
+   - Disk space metrics
+
+2. **Set up alerting** for:
+   - Node disconnections
+   - Disk space < 10%
+   - Persistent resync errors
+   - High error rates
+
+3. **Create dashboards** for:
+   - Cluster health overview
+   - API performance (latency, throughput)
+   - Resource usage (disk, memory)
+   - RPC performance
+
+4. **Track trends** over time:
+   - Request rates and patterns
+   - Disk usage growth
+   - Error rates
+
+5. **Document your alerts** and runbooks for common issues
+
+## See Also
+
+- [Monitoring Cookbook](/operations/monitoring)
+- [Data Durability and Repairs](/operations/durability-repairs)
+- [Cluster Layout Management](/operations/cluster-layout)
+- [Configuration Reference](/cli/configuration)

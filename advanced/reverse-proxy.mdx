@@ -1,0 +1,339 @@
+---
+title: Reverse Proxy Configuration
+description: Configure reverse proxies to provide TLS and load balancing for Garage
+---
+
+The main reason to add a reverse proxy in front of Garage is to provide TLS to your users and serve multiple web services on port 443.
+
+In production you will likely need your certificates signed by a certificate authority. The most automated way is to use a provider supporting the [ACME protocol](https://datatracker.ietf.org/doc/html/rfc8555) such as [Let's Encrypt](https://letsencrypt.org/) or [ZeroSSL](https://zerossl.com/).
+
+## Testing with Self-Signed Certificates
+
+If you are only testing Garage, you can generate a self-signed certificate:
+
+```bash
+openssl req \
+    -new \
+    -x509 \
+    -keyout /tmp/garage.key \
+    -out /tmp/garage.crt \
+    -nodes  \
+    -subj "/C=XX/ST=XX/L=XX/O=XX/OU=XX/CN=localhost/emailAddress=X@X.XX" \
+    -addext "subjectAltName = DNS:localhost, IP:127.0.0.1"
+
+cat /tmp/garage.key /tmp/garage.crt > /tmp/garage.pem
+```
+
+<Warning>
+When using self-signed certificates, you will need to allow them in your S3 client. For example, with MinIO client:
+
+```bash
+mc ls --insecure garage/
+```
+</Warning>
+
+## Nginx
+
+Nginx is a well-known reverse proxy suitable for production. The configuration involves defining upstream blocks (backends) and server blocks (frontends) for both the S3 and web endpoints.
+
+### S3 API Endpoint
+
+First, define the upstream to access your Garage cluster with load balancing:
+
+```nginx
+upstream s3_backend {
+  # Local Garage instance
+  server 127.0.0.1:3900;
+  # Additional instances
+  server 192.168.1.3:3900;
+  # Domain names also work
+  server garage1.example.com:3900;
+  # Backup server only used if others fail
+  server garage-remote.example.com:3900 backup;
+  # Assign weights for servers with different capacities
+  server garage2.example.com:3900 weight=2;
+}
+
+server {
+  listen [::]:443 http2 ssl;
+
+  ssl_certificate     /tmp/garage.crt;
+  ssl_certificate_key /tmp/garage.key;
+
+  # Multiple server names needed:
+  #  - s3.garage.tld for path-based S3 requests
+  #  - *.s3.garage.tld for vhost-based S3 requests
+  server_name s3.garage.tld *.s3.garage.tld;
+
+  location / {
+    proxy_pass http://s3_backend;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Host $http_host;
+    # Disable buffering to a temporary file
+    proxy_max_temp_file_size 0;
+  }
+}
+```
+
+### Web Endpoint
+
+The web endpoint configuration is similar but uses the web port (3902):
+
+```nginx
+upstream web_backend {
+  server 127.0.0.1:3902;
+  server 192.168.1.3:3902;
+  server garage1.example.com:3902;
+  server garage2.example.com:3902 weight=2;
+}
+
+server {
+  listen [::]:443 http2 ssl;
+
+  ssl_certificate     /tmp/garage.crt;
+  ssl_certificate_key /tmp/garage.key;
+
+  # Multiple server names:
+  #  - *.web.garage.tld for generic websites
+  #  - Custom domains reserved by users
+  server_name *.web.garage.tld example.com my-site.tld;
+
+  location / {
+    proxy_pass http://web_backend;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Host $host;
+  }
+}
+```
+
+Save these configurations to `/etc/nginx/sites-available/garage.conf`, then:
+
+```bash
+ln -s /etc/nginx/sites-available/garage.conf /etc/nginx/sites-enabled/
+nginx -s reload
+```
+
+## Apache httpd
+
+Apache HTTP Server can also serve as a reverse proxy for Garage.
+
+### S3 API Configuration
+
+Create a virtual host with SSL certificates:
+
+```apache
+<VirtualHost *:443>
+  ServerName garage.example.com
+
+  SSLCertificateFile /etc/letsencrypt/live/garage.example.com/fullchain.pem
+  SSLCertificateKeyFile /etc/letsencrypt/live/garage.example.com/privkey.pem
+  Include /etc/letsencrypt/options-ssl-apache.conf
+
+  Header always set Strict-Transport-Security "max-age=31536000"
+  Header always add Content-Security-Policy upgrade-insecure-requests
+
+  ProxyPass "/" "http://localhost:3900/" nocanon
+  ProxyPreserveHost on
+</VirtualHost>
+```
+
+<Warning>
+The `nocanon` keyword is critical for presigned URLs to work correctly. Without it, Apache will canonicalize the URL path, breaking presigned URL signatures.
+</Warning>
+
+### Web Endpoint Configuration
+
+For static websites, change the port in the `ProxyPass` directive:
+
+```apache
+ProxyPass "/" "http://localhost:3902/" nocanon
+```
+
+### Unix Socket Support
+
+Apache can proxy via Unix sockets if Garage is configured to use them:
+
+**garage.toml:**
+```toml
+[s3_api]
+api_bind_addr = "/run/garage/s3_api.socket"
+```
+
+**Apache config:**
+```apache
+ProxyPass "/" "unix:/run/garage/s3_api.socket|http://localhost/" nocanon
+```
+
+## Traefik v2
+
+Traefik provides dynamic configuration and automatic ACME certificate management.
+
+### Basic Configuration
+
+```toml
+[entryPoints]
+  [entryPoints.web]
+    address = ":80"
+
+  [entryPoints.websecure]
+    address = ":443"
+
+[certificatesResolvers.myresolver.acme]
+  email = "your-email@example.com"
+  storage = "acme.json"
+  [certificatesResolvers.myresolver.acme.httpChallenge]
+    entryPoint = "web"
+```
+
+### Garage Services
+
+Define Garage S3 and web services with load balancing:
+
+```toml
+[http.services]
+  [http.services.garage-s3-service.loadBalancer]
+    [[http.services.garage-s3-service.loadBalancer.servers]]
+      url = "http://xxx.xxx.xxx.xxx"
+      port = 3900
+    [[http.services.garage-s3-service.loadBalancer.servers]]
+      url = "http://yyy.yyy.yyy.yyy"
+      port = 3900
+    
+    [http.services.garage-s3-service.loadBalancer.healthCheck]
+      path = "/health"
+      port = "3903"
+
+  [http.services.garage-web-service.loadBalancer]
+    [[http.services.garage-web-service.loadBalancer.servers]]
+      url = "http://xxx.xxx.xxx.xxx"
+      port = 3902
+    
+    [http.services.garage-web-service.loadBalancer.healthCheck]
+      path = "/health"
+      port = "3903"
+```
+
+### Routers
+
+```toml
+[http.routers]
+  [http.routers.garage-s3]
+    rule = "Host(`s3.example.org`)"
+    service = "garage-s3-service"
+    entryPoints = ["websecure"]
+    [http.routers.garage-s3.tls]
+      certResolver = "myresolver"
+
+  [http.routers.my_website]
+    rule = "Host(`yoururl.example.org`)"
+    service = "garage-web-service"
+    entryPoints = ["websecure"]
+    [http.routers.my_website.tls]
+      certResolver = "myresolver"
+```
+
+### Compression Middleware
+
+Add gzip compression before sending responses:
+
+```toml
+[http.routers]
+  [http.routers.my_website]
+    middlewares = ["compression"]
+    # ... other config
+
+[http.middlewares]
+  [http.middlewares.compression.compress]
+```
+
+## Caddy
+
+Caddy provides automatic HTTPS with built-in ACME support.
+
+### Basic Configuration
+
+```caddy
+s3.garage.tld, *.s3.garage.tld {
+    reverse_proxy localhost:3900 192.168.1.2:3900 example.tld:3900 {
+        health_uri       /health
+        health_port      3903
+    }
+}
+
+*.web.garage.tld {
+    reverse_proxy localhost:3902 192.168.1.2:3902 example.tld:3902 {
+        health_uri       /health
+        health_port      3903
+    }
+}
+
+admin.garage.tld {
+    reverse_proxy localhost:3903 {
+        health_uri       /health
+        health_port      3903
+    }
+}
+```
+
+### Caching
+
+Caddy supports a cache plugin for static website hosting:
+
+```caddy
+# Global configuration
+{
+    order cache before rewrite
+    cache
+}
+
+# Site specific
+https:// {
+    cache
+    reverse_proxy ...
+}
+```
+
+### On-Demand TLS
+
+Caddy can provision TLS certificates on-demand when clients first connect. Configure Garage's check endpoint to authorize domains:
+
+```caddy
+# Global configuration
+{
+    on_demand_tls {
+        ask http://localhost:3903/check
+        interval 2m
+        burst 5
+    }
+}
+
+# Host configuration
+*.web.garage.tld {
+    tls {
+        on_demand
+    }
+    reverse_proxy localhost:3902 192.168.1.2:3902 example.tld:3902
+}
+```
+
+<Warning>
+Never configure `https://` with on-demand TLS without the global `ask` endpoint, as this would allow attackers to request certificates for arbitrary domains pointed at your server.
+</Warning>
+
+## socat (Testing Only)
+
+For quick TLS testing, socat can wrap a Garage endpoint:
+
+```bash
+socat \
+"openssl-listen:443,\
+reuseaddr,\
+fork,\
+verify=0,\
+cert=/tmp/garage.pem" \
+tcp4-connect:localhost:3900
+```
+
+<Warning>
+This is only suitable for testing purposes, not production use.
+</Warning>

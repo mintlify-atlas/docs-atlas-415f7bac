@@ -1,0 +1,253 @@
+---
+title: Admin API Overview
+description: Overview of the Garage Admin API and authentication methods
+---
+
+The Garage Admin API provides programmatic access to administer your Garage cluster, including managing cluster status, layout, keys, buckets, and maintenance tasks.
+
+## API Version
+
+The current version of the Admin API is **v2**. All API endpoints are prefixed with `/v2/`.
+
+No breaking changes to the Garage administration API will be published outside of a major release.
+
+### Version History
+
+- Before Garage v0.7.2 - no admin API
+- Garage v0.7.2 - admin API v0
+- Garage v0.9.0 - admin API v1, deprecate admin API v0
+- Garage v2.0.0 - admin API v2, deprecate admin API v1
+
+## Configuration
+
+The Admin API is accessible through a dedicated server whose listen address is specified in the `[admin]` section of the configuration file.
+
+```toml
+[admin]
+api_bind_addr = "127.0.0.1:3903"
+```
+
+## Authentication
+
+Administration API requests are authenticated using HTTP bearer tokens.
+
+### Using Bearer Tokens
+
+Add the following HTTP header to your requests:
+
+```
+Authorization: Bearer <token>
+```
+
+### User-Defined API Tokens
+
+Cluster administrators can dynamically define administration tokens using the CLI:
+
+```bash
+garage admin-token create --expires-in 30d \
+    --scope ListBuckets,GetBucketInfo,ListKeys,GetKeyInfo,CreateBucket,CreateKey,AllowBucketKey,DenyBucketKey \
+    my-token
+```
+
+**Output:**
+```
+This is your secret bearer token, it will not be shown again by Garage:
+
+  8ed1830b10a276ff57061950.kOSIpxWK9zSGbTO9Xadpv3YndSFWma0_snXcYHaORXk
+
+==== ADMINISTRATION TOKEN INFORMATION ====
+Token ID:    8ed1830b10a276ff57061950
+Token name:  my-token
+Created:     2025-06-15 15:12:44.160 +02:00
+Validity:    valid
+Expiration:  2025-07-15 15:12:44.117 +02:00
+
+Scope:       ListBuckets
+             GetBucketInfo
+             ListKeys
+             GetKeyInfo
+             CreateBucket
+             CreateKey
+             AllowBucketKey
+             DenyBucketKey
+```
+
+<Warning>
+The token is shown only once and **will never be shown again by Garage**, so save it securely.
+</Warning>
+
+#### Token Properties
+
+- **Scoped access**: Tokens can be limited to specific API operations
+- **Expiration**: Tokens can have an expiration date
+- **Hashed storage**: Tokens are hashed internally and identified by their prefix
+
+### Master API Tokens
+
+Master tokens can be configured in the `[admin]` section:
+
+```toml
+[admin]
+api_bind_addr = "127.0.0.1:3903"
+admin_token = "your-admin-token-here"
+metrics_token = "your-metrics-token-here"
+```
+
+- `admin_token`: Grants access to all administration endpoints
+- `metrics_token`: Grants access only to the `/metrics` endpoint
+
+<Note>
+With the introduction of user-defined admin tokens, the use of master API tokens is now discouraged.
+</Note>
+
+## Making API Requests
+
+### Using curl
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  http://localhost:3903/v2/GetClusterStatus | jq
+```
+
+### Using the `garage` CLI
+
+Since v2.0.0, the `garage` binary provides a `json-api` subcommand:
+
+```bash
+garage json-api GetClusterHealth
+```
+
+**Output:**
+```json
+{
+  "connectedNodes": 3,
+  "knownNodes": 3,
+  "partitions": 256,
+  "partitionsAllOk": 256,
+  "partitionsQuorum": 256,
+  "status": "healthy",
+  "storageNodes": 3,
+  "storageNodesOk": 3
+}
+```
+
+#### With JSON Body
+
+```bash
+# Direct JSON body
+garage json-api CreateAdminToken '{"name": "test"}'
+
+# From stdin
+garage json-api CreateAdminToken -
+{"name": "test"}
+<EOF>
+```
+
+#### With Query Parameters
+
+```bash
+garage json-api GetAdminTokenInfo '{"id":"b0e6e0ace2c0b2aca4cdb2de"}'
+```
+
+#### With Both Query and Body
+
+```bash
+garage json-api UpdateAdminToken '{"id":"b0e6e0ace2c0b2aca4cdb2de", "body":{"name":"not a test"}}'
+```
+
+<Note>
+The `garage json-api` command uses Garage's internal RPC protocol and does not require authentication.
+</Note>
+
+## Special Endpoints
+
+### Health Check
+
+```bash
+GET /health
+```
+
+Returns `200 OK` if the cluster has quorum, otherwise `503 Service Unavailable`.
+
+**Example:**
+```bash
+curl -i http://localhost:3903/health
+```
+
+### Metrics
+
+```bash
+GET /metrics
+```
+
+Returns internal Garage metrics in Prometheus format.
+
+**Example:**
+```bash
+curl -H 'Authorization: Bearer metrics-token' \
+  http://localhost:3903/metrics
+```
+
+### On-Demand TLS Check
+
+```bash
+GET /check?domain=example.com
+```
+
+Checks whether a bucket is configured to serve a static website for the requested domain. Used by reverse proxies like Caddy for on-demand TLS certificates.
+
+**Responses:**
+- `200 OK`: Domain redirects to a static website bucket
+- `400 Bad Request`: No static website bucket exists for this domain
+
+## API Categories
+
+The Admin API is organized into several categories:
+
+- **Cluster**: Status, health, and node connectivity
+- **Cluster Layout**: Layout management and updates
+- **Buckets**: Bucket creation, configuration, and deletion
+- **Access Keys**: Key management and permissions
+- **Admin Tokens**: Token management
+- **Nodes**: Node information and maintenance
+- **Workers**: Background worker management
+
+## Error Responses
+
+All endpoints return errors in the following format:
+
+```json
+{
+  "code": "ErrorCode",
+  "message": "Human-readable error message",
+  "region": "garage"
+}
+```
+
+Common HTTP status codes:
+- `200`: Success
+- `400`: Bad Request (invalid parameters)
+- `404`: Not Found (resource doesn't exist)
+- `500`: Internal Server Error
+- `503`: Service Unavailable
+
+## OpenAPI Specification
+
+The complete OpenAPI specification is available at:
+
+- [HTML spec](https://garagehq.deuxfleurs.fr/api/garage-admin-v2.html)
+- [JSON spec](https://garagehq.deuxfleurs.fr/api/garage-admin-v2.json)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Cluster Management" icon="server" href="/api/admin/cluster">
+    Manage cluster status, health, and layout
+  </Card>
+  <Card title="Bucket Management" icon="bucket" href="/api/admin/buckets">
+    Create and manage S3 buckets
+  </Card>
+  <Card title="Key Management" icon="key" href="/api/admin/keys">
+    Manage access keys and permissions
+  </Card>
+</CardGroup>

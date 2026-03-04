@@ -1,0 +1,418 @@
+---
+title: Quick Start Guide
+description: Get started with Garage in minutes - from installation to your first upload
+---
+
+This guide will help you deploy Garage as a single-node server and interact with it. This is the recommended first step before moving on to configuring a multi-node cluster.
+
+<Warning>
+Single-node deployments provide no redundancy for your data and should not be used in production.
+</Warning>
+
+## Prerequisites
+
+Before you begin, make sure you have:
+- A Linux, macOS, or Windows system
+- OpenSSL installed (for generating secure credentials)
+- Python (optional, for AWS CLI)
+
+## Installation
+
+<Steps>
+
+<Step title="Download Garage">
+
+Download the latest Garage binary for your platform:
+
+```bash
+wget https://garagehq.deuxfleurs.fr/download/
+```
+
+Place the binary in your `$PATH`:
+
+```bash
+sudo cp garage /usr/local/bin/
+sudo chmod +x /usr/local/bin/garage
+```
+
+Verify the installation:
+
+```bash
+garage --version
+```
+
+<Note>
+You can also use your distribution's package manager if a [binary package](https://garagehq.deuxfleurs.fr/documentation/cookbook/binary-packages/) is available, or [build from source](https://garagehq.deuxfleurs.fr/documentation/cookbook/from-source/) if needed.
+</Note>
+
+</Step>
+
+<Step title="Create Configuration File">
+
+Generate a configuration file with secure random secrets:
+
+```bash
+cat > garage.toml <<EOF
+metadata_dir = "/tmp/meta"
+data_dir = "/tmp/data"
+db_engine = "sqlite"
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+rpc_secret = "$(openssl rand -hex 32)"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage.localhost"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"
+admin_token = "$(openssl rand -base64 32)"
+metrics_token = "$(openssl rand -base64 32)"
+EOF
+```
+
+<Warning>
+This configuration uses `/tmp` for data storage, which is erased on system reboot. For persistent storage, change `metadata_dir` and `data_dir` to permanent locations.
+</Warning>
+
+Set the configuration file location:
+
+```bash
+export GARAGE_CONFIG_FILE=$(pwd)/garage.toml
+```
+
+</Step>
+
+<Step title="Configure Access Credentials">
+
+Set up a default access key and bucket using environment variables (available in Garage v2.3.0+):
+
+```bash
+export GARAGE_DEFAULT_ACCESS_KEY="GK$(openssl rand -hex 16)"
+export GARAGE_DEFAULT_SECRET_KEY="$(openssl rand -hex 32)"
+export GARAGE_DEFAULT_BUCKET="default-bucket"
+```
+
+<Note>
+Save these credentials securely - you'll need them to access your bucket!
+</Note>
+
+</Step>
+
+<Step title="Start Garage Server">
+
+Launch Garage with automatic single-node configuration:
+
+```bash
+garage server --single-node --default-bucket
+```
+
+The flags do the following:
+- `--single-node`: Automatically configures a single-node cluster without data replication
+- `--default-bucket`: Creates a default access key and bucket using the environment variables
+
+<Note>
+For Garage versions before v2.3.0, these flags are not available. You'll need to follow the manual configuration steps at the end of this guide.
+</Note>
+
+</Step>
+
+<Step title="Verify Cluster Status">
+
+In a new terminal, check that Garage is running correctly:
+
+```bash
+export GARAGE_CONFIG_FILE=$(pwd)/garage.toml
+garage status
+```
+
+You should see output like:
+
+```
+==== HEALTHY NODES ====
+ID                Hostname  Address         Tags       Zone  Capacity  DataAvail         Version
+563e1ac825ee3323  linuxbox  127.0.0.1:3901  [default]  dc1   19.9 GiB  19.5 GiB (97.6%)  v2.3.0
+```
+
+</Step>
+
+</Steps>
+
+## Using Garage with AWS CLI
+
+Now that Garage is running, let's upload and download files using the AWS CLI.
+
+<Steps>
+
+<Step title="Install AWS CLI">
+
+```bash
+python -m pip install --user awscli
+```
+
+Verify installation:
+
+```bash
+aws --version
+```
+
+<Note>
+You need at least AWS CLI v1.29.0 or v2.13.0 to use the `AWS_ENDPOINT_URL` environment variable.
+</Note>
+
+</Step>
+
+<Step title="Configure AWS CLI">
+
+Create a configuration file to store your Garage credentials:
+
+```bash
+cat > ~/.awsrc <<EOF
+export AWS_ENDPOINT_URL='http://localhost:3900'
+export AWS_DEFAULT_REGION='garage'
+export AWS_ACCESS_KEY_ID='$GARAGE_DEFAULT_ACCESS_KEY'
+export AWS_SECRET_ACCESS_KEY='$GARAGE_DEFAULT_SECRET_KEY'
+
+aws --version
+EOF
+```
+
+Load the configuration:
+
+```bash
+source ~/.awsrc
+```
+
+<Note>
+You can create multiple configuration files for different Garage clusters or access keys. Switch between them by sourcing the appropriate file.
+</Note>
+
+</Step>
+
+<Step title="Test Upload and Download">
+
+List your buckets:
+
+```bash
+aws s3 ls
+```
+
+You should see your default bucket:
+
+```
+2026-03-04 10:30:45 default-bucket
+```
+
+Upload a file:
+
+```bash
+aws s3 cp /proc/cpuinfo s3://default-bucket/cpuinfo.txt
+```
+
+List objects in the bucket:
+
+```bash
+aws s3 ls s3://default-bucket
+```
+
+Download the file:
+
+```bash
+aws s3 cp s3://default-bucket/cpuinfo.txt /tmp/cpuinfo.txt
+```
+
+Verify the download:
+
+```bash
+cat /tmp/cpuinfo.txt
+```
+
+</Step>
+
+</Steps>
+
+## Using Docker
+
+If you prefer to run Garage in a container:
+
+```bash
+docker run \
+  -d \
+  --name garage-container \
+  -p 3900:3900 -p 3901:3901 -p 3902:3902 -p 3903:3903 \
+  -v $(pwd)/garage.toml:/etc/garage.toml \
+  -e GARAGE_DEFAULT_ACCESS_KEY \
+  -e GARAGE_DEFAULT_SECRET_KEY \
+  -e GARAGE_DEFAULT_BUCKET \
+  dxflrs/garage:v2.2.0 \
+  /garage server --single-node --default-bucket
+```
+
+To execute Garage commands in the container:
+
+```bash
+docker exec garage-container /garage status
+```
+
+<Warning>
+This Docker command does not create persistent volumes. Add volume mounts for your data and metadata directories to persist data across container restarts.
+</Warning>
+
+## Alternative S3 Clients
+
+Garage is compatible with many S3 clients:
+
+<CardGroup cols={2}>
+
+<Card title="Minio Client" icon="cloud">
+  Fast and feature-rich CLI client
+</Card>
+
+<Card title="s3cmd" icon="terminal">
+  Popular command-line S3 client
+</Card>
+
+<Card title="rclone" icon="sync">
+  Versatile cloud storage manager
+</Card>
+
+<Card title="Cyberduck" icon="duck">
+  GUI client for macOS and Windows
+</Card>
+
+</CardGroup>
+
+See the [S3 compatibility documentation](https://garagehq.deuxfleurs.fr/documentation/reference-manual/s3-compatibility/) for a complete list of supported features and clients.
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="Garage won't start">
+
+Ensure that:
+- Your configuration file is readable by the user running Garage
+- The `metadata_dir` and `data_dir` exist and are writable
+- No other service is using ports 3900-3903
+
+Check the logs for detailed error messages:
+
+```bash
+RUST_LOG=garage=debug garage server --single-node --default-bucket
+```
+
+</Accordion>
+
+<Accordion title="Cannot connect with AWS CLI">
+
+Verify that:
+- Garage is running (`garage status` should work)
+- Your AWS credentials are correctly exported (`echo $AWS_ACCESS_KEY_ID`)
+- The endpoint URL is correct (`http://localhost:3900`)
+- Your AWS CLI version is recent enough (v1.29.0+ or v2.13.0+)
+
+</Accordion>
+
+<Accordion title="Files are not persisting after reboot">
+
+The quick start configuration uses `/tmp` for storage, which is cleared on reboot. Update your `garage.toml` to use permanent directories:
+
+```toml
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+```
+
+Create these directories and ensure they're writable by the Garage user.
+
+</Accordion>
+
+</AccordionGroup>
+
+## Manual Configuration (Pre-v2.3.0)
+
+If you're using Garage before v2.3.0, the `--single-node` and `--default-bucket` flags are not available. Follow these manual steps:
+
+<Steps>
+
+<Step title="Start Garage">
+
+```bash
+garage server
+```
+
+</Step>
+
+<Step title="Create Cluster Layout">
+
+In a new terminal:
+
+```bash
+export GARAGE_CONFIG_FILE=$(pwd)/garage.toml
+garage status
+```
+
+Note the node ID from the output, then assign it a zone and capacity:
+
+```bash
+garage layout assign -z dc1 -c 1G <node_id>
+garage layout apply --version 1
+```
+
+</Step>
+
+<Step title="Create Bucket and Key">
+
+Create a bucket:
+
+```bash
+garage bucket create default-bucket
+```
+
+Create an access key:
+
+```bash
+garage key create my-key
+```
+
+Note the Key ID and Secret Key from the output.
+
+Grant permissions:
+
+```bash
+garage bucket allow --read --write --owner default-bucket --key my-key
+```
+
+</Step>
+
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Multi-Node Cluster" icon="network-wired" href="https://garagehq.deuxfleurs.fr/documentation/cookbook/real-world/">
+  Set up a production-ready multi-node deployment
+</Card>
+
+<Card title="Configuration Reference" icon="gear" href="https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/">
+  Learn about all configuration options
+</Card>
+
+<Card title="S3 Compatibility" icon="check" href="https://garagehq.deuxfleurs.fr/documentation/reference-manual/s3-compatibility/">
+  Check which S3 features are supported
+</Card>
+
+<Card title="Static Website Hosting" icon="globe" href="https://garagehq.deuxfleurs.fr/documentation/cookbook/exposing-websites/">
+  Host static websites from Garage buckets
+</Card>
+
+</CardGroup>

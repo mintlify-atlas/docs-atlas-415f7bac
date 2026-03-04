@@ -1,0 +1,228 @@
+---
+title: "Building from Source"
+description: "Compile Garage from source code with Rust and Cargo"
+---
+
+Garage is a standard Rust project that can be compiled from source. Building from source allows you to customize the build with specific feature flags and ensures you have the latest version.
+
+## Prerequisites
+
+### Rust Toolchain
+
+You need Rust and Cargo installed on your system.
+
+<CodeGroup>
+
+```bash Debian/Ubuntu
+sudo apt-get update
+sudo apt-get install -y rustc cargo
+```
+
+```bash Using Rustup (Recommended)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+</CodeGroup>
+
+<Tip>
+[Rustup](https://rustup.rs/) is the recommended way to install Rust as it allows easy version management and always provides the latest stable toolchain.
+</Tip>
+
+### C Toolchain
+
+A full C toolchain is required for building Garage's dependencies.
+
+<CodeGroup>
+
+```bash Debian/Ubuntu
+sudo apt-get update
+sudo apt-get install build-essential
+```
+
+```bash Alpine Linux
+apk add gcc musl-dev
+```
+
+```bash Fedora/RHEL
+sudo dnf groupinstall "Development Tools"
+```
+
+</CodeGroup>
+
+## Building from Source
+
+<Steps>
+
+<Step title="Clone the repository">
+
+The primary location for Garage's source code is the [Forgejo repository](https://git.deuxfleurs.fr/Deuxfleurs/garage).
+
+```bash
+git clone https://git.deuxfleurs.fr/Deuxfleurs/garage.git
+cd garage
+```
+
+</Step>
+
+<Step title="Checkout a specific version (optional)">
+
+To build a specific version of Garage, check out the corresponding tag:
+
+```bash
+# List available tags
+git tag
+
+# Checkout a specific version
+git checkout v0.8.0
+```
+
+<Warning>
+If you skip this step, you'll be building from the `main` branch, which contains development code for the next version. Development builds may be unstable, contain bugs, or be incompatible with stable versions.
+</Warning>
+
+</Step>
+
+<Step title="Build Garage">
+
+Build a release version of Garage:
+
+```bash
+cargo build --release
+```
+
+The compilation process may take several minutes depending on your hardware.
+
+</Step>
+
+<Step title="Install the binary">
+
+The compiled binary is located at `target/release/garage`. Copy it to a location in your `$PATH`:
+
+```bash
+sudo cp target/release/garage /usr/local/bin/garage
+```
+
+Verify the installation:
+
+```bash
+garage --version
+```
+
+</Step>
+
+</Steps>
+
+## Development Builds
+
+If you're developing Garage, you can create debug builds that compile faster but run slower:
+
+```bash
+cargo build
+```
+
+The debug binary will be located at `target/debug/garage`.
+
+## Cargo Feature Flags
+
+Garage supports several compilation options through Cargo feature flags. These allow you to customize the build for your specific use case.
+
+### Building with Custom Features
+
+<CodeGroup>
+
+```bash Add features to defaults
+# Build with default features plus additional ones
+cargo build --release --features consul-discovery,kubernetes-discovery,k2v
+```
+
+```bash Build only specific features
+# Build with ONLY specified features
+cargo build --release --no-default-features \
+  --features lmdb,sqlite,metrics
+```
+
+```bash Use system libraries
+# Use system libraries instead of bundled versions
+cargo build --release --no-default-features \
+  --features system-libs
+```
+
+</CodeGroup>
+
+### Available Feature Flags
+
+| Feature Flag | Default | Description |
+|--------------|---------|-------------|
+| `bundled-libs` | ✅ | Use bundled versions of sqlite3, zstd, lmdb, and libsodium |
+| `lmdb` | ✅ | Enable using LMDB to store Garage's metadata |
+| `sqlite` | ✅ | Enable using SQLite3 to store Garage's metadata |
+| `metrics` | ✅ | Enable Prometheus metrics collection on the admin API |
+| `consul-discovery` | ❌ | Enable automatic node discovery through Consul API |
+| `kubernetes-discovery` | ❌ | Enable automatic node discovery through Kubernetes API |
+| `k2v` | ❌ | Enable the experimental K2V API |
+| `fjall` | ❌ | Enable using Fjall to store Garage's metadata (experimental) |
+| `journald` | ❌ | Enable logging to systemd-journald |
+| `syslog` | ❌ | Enable logging to Syslog |
+| `telemetry-otlp` | ❌ | Enable OpenTelemetry execution traces |
+| `system-libs` | ❌ | Use system versions of libraries (exclusive with `bundled-libs`) |
+
+<Note>
+If you enable the `k2v` feature, all nodes in your Garage cluster must have it enabled for compatibility.
+</Note>
+
+## Build Configuration
+
+Garage uses the following release profile settings (defined in `Cargo.toml`):
+
+```toml
+[profile.release]
+lto = "thin"              # Thin link-time optimization
+codegen-units = 16        # Parallel code generation
+opt-level = 3             # Maximum optimization
+strip = "debuginfo"       # Remove debug symbols
+```
+
+These settings balance compilation time with runtime performance and binary size.
+
+## Troubleshooting
+
+### Compilation Errors
+
+If you encounter compilation errors:
+
+1. **Update Rust**: Ensure you have the latest stable Rust toolchain
+   ```bash
+   rustup update stable
+   ```
+
+2. **Clean build artifacts**: Remove old build artifacts and try again
+   ```bash
+   cargo clean
+   cargo build --release
+   ```
+
+3. **Check dependencies**: Ensure all system dependencies are installed
+
+### Out of Memory
+
+If compilation fails due to memory constraints, reduce parallel compilation:
+
+```bash
+cargo build --release -j 2
+```
+
+## Next Steps
+
+After building Garage:
+
+1. Create a [configuration file](/cli/configuration)
+2. Follow the [Quick Start](/quickstart) guide to set up your cluster
+3. Learn about [cluster operations](/operations/cluster-layout)
+
+## Alternative Installation Methods
+
+If building from source isn't suitable for your needs:
+
+- [Install from binary packages](/installation/binary-packages)
+- [Run with Docker](/installation/docker)
+- Download pre-built binaries from [garagehq.deuxfleurs.fr/download/](https://garagehq.deuxfleurs.fr/download/)

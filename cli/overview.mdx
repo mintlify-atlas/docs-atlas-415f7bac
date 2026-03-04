@@ -1,0 +1,151 @@
+---
+title: CLI Overview
+description: Garage command-line interface overview and common options
+---
+
+## Introduction
+
+Garage provides a comprehensive command-line interface (CLI) for managing your distributed object storage cluster. The CLI allows you to perform administrative tasks such as managing nodes, configuring layouts, creating buckets, managing access keys, and running repair operations.
+
+## Global Options
+
+These options apply to all Garage commands:
+
+<ParamField path="-h, --rpc-host" type="string" default="from config file">
+  Host to connect to for admin operations, in the format: `<full-node-id>@<ip>:<port>`
+  
+  Can also be set via the `GARAGE_RPC_HOST` environment variable.
+</ParamField>
+
+<ParamField path="--rpc-secret" type="string" default="from config file">
+  RPC secret for authentication
+  
+  Can also be set via the `GARAGE_RPC_SECRET` environment variable.
+</ParamField>
+
+<ParamField path="--rpc-secret-file" type="string" default="from config file">
+  Path to file containing the RPC secret
+  
+  Can also be set via the `GARAGE_RPC_SECRET_FILE` environment variable.
+</ParamField>
+
+<ParamField path="-c, --config" type="string" default="/etc/garage.toml">
+  Path to the Garage configuration file
+  
+  Can also be set via the `GARAGE_CONFIG_FILE` environment variable.
+</ParamField>
+
+## Command Structure
+
+The Garage CLI follows this general pattern:
+
+```bash
+garage [GLOBAL OPTIONS] <COMMAND> [SUBCOMMAND] [OPTIONS] [ARGUMENTS]
+```
+
+## Available Commands
+
+<CardGroup cols={2}>
+  <Card title="server" icon="server" href="/cli/server">
+    Start the Garage server process
+  </Card>
+  
+  <Card title="node" icon="circle-nodes" href="/cli/node">
+    Manage individual Garage nodes
+  </Card>
+  
+  <Card title="layout" icon="diagram-project" href="/cli/layout">
+    Configure cluster layout and node roles
+  </Card>
+  
+  <Card title="bucket" icon="bucket" href="/cli/bucket">
+    Manage S3 buckets
+  </Card>
+  
+  <Card title="key" icon="key" href="/cli/key">
+    Manage S3 access keys
+  </Card>
+  
+  <Card title="repair" icon="wrench" href="/cli/repair">
+    Run data repair operations
+  </Card>
+</CardGroup>
+
+## Additional Commands
+
+- `garage status` - Get network status of the cluster
+- `garage stats` - Gather node statistics
+- `garage worker` - Manage background workers
+- `garage block` - Debug operations on data blocks
+- `garage meta` - Operations on the metadata database
+- `garage admin-token` - Manage admin API tokens
+- `garage offline-repair` - Offline repair operations
+- `garage convert-db` - Convert metadata database formats
+
+## Environment Variables
+
+Garage respects the following environment variables:
+
+- `GARAGE_RPC_HOST` - Default RPC host to connect to
+- `GARAGE_RPC_SECRET` - RPC secret for authentication
+- `GARAGE_RPC_SECRET_FILE` - Path to file containing RPC secret
+- `GARAGE_CONFIG_FILE` - Path to configuration file (default: `/etc/garage.toml`)
+- `RUST_LOG` - Configure logging verbosity (default: `netapp=warn,garage=warn`)
+- `GARAGE_LOG_TO_SYSLOG` - Enable syslog logging (set to `1` or `true`)
+- `GARAGE_LOG_TO_JOURNALD` - Enable journald logging (set to `1` or `true`)
+
+## Configuration File
+
+By default, Garage looks for its configuration at `/etc/garage.toml`. You can specify a different location using the `-c` flag or the `GARAGE_CONFIG_FILE` environment variable.
+
+If both `--rpc-host` and `--rpc-secret` are provided via command-line or environment variables, Garage will not require a configuration file for administrative commands.
+
+## Examples
+
+### Using Configuration File
+
+```bash
+# Use default config file at /etc/garage.toml
+garage status
+
+# Specify custom config file
+garage -c /path/to/garage.toml bucket list
+```
+
+### Using Environment Variables
+
+```bash
+# Set connection details via environment
+export GARAGE_RPC_HOST="1234567890abcdef@192.168.1.10:3901"
+export GARAGE_RPC_SECRET="your-rpc-secret"
+
+# Now you can run commands without a config file
+garage status
+garage bucket list
+```
+
+### Remote Administration
+
+```bash
+# Connect to a remote Garage node
+garage -h "1234567890abcdef@192.168.1.10:3901" status
+
+# Use environment variable for remote host
+export GARAGE_RPC_HOST="1234567890abcdef@192.168.1.10:3901"
+garage status
+```
+
+## Getting Help
+
+For help with any command, use the `--help` flag:
+
+```bash
+# General help
+garage --help
+
+# Help for a specific command
+garage bucket --help
+
+# Help for a subcommand
+garage bucket create --help
+```

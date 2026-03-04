@@ -1,0 +1,452 @@
+---
+title: garage layout
+description: Manage cluster layout and node role assignments
+---
+
+## Description
+
+The `garage layout` commands manage the cluster layout, which defines how data is distributed across nodes. The layout includes node roles (storage or gateway), zones, capacities, and redundancy parameters.
+
+Garage uses a **staged configuration model**: changes are first staged, reviewed, and then explicitly applied. This prevents accidental misconfigurations.
+
+## Usage
+
+```bash
+garage layout <SUBCOMMAND> [OPTIONS]
+```
+
+## Subcommands
+
+### layout show
+
+Show the current cluster layout and any staged changes.
+
+```bash
+garage layout show
+```
+
+This displays:
+- Current active layout with node roles
+- Staged changes (if any)
+- Preview of new layout after applying changes
+- Statistics about data movement
+
+### layout assign
+
+Assign a role to one or more Garage nodes.
+
+```bash
+garage layout assign [OPTIONS] <NODE_ID>...
+```
+
+<ParamField path="NODE_ID" type="string" required>
+  One or more node IDs (or prefixes) to assign roles to.
+</ParamField>
+
+<ParamField path="-z, --zone" type="string">
+  Location (zone or datacenter) of the node.
+  
+  The zone is used for redundancy calculations. Place nodes in different zones to ensure data survives zone failures.
+</ParamField>
+
+<ParamField path="-c, --capacity" type="string">
+  Storage capacity in bytes. Supports suffixes: B, KB, MB, GB, TB, PB.
+  
+  Example: `100GB`, `1TB`, `500MB`
+  
+  This tells Garage how much data this node should store. Garage distributes data proportionally based on capacity.
+</ParamField>
+
+<ParamField path="-g, --gateway" type="flag">
+  Configure node as gateway-only (no data storage).
+  
+  Gateway nodes handle S3 API requests but don't store data. Use this for frontend nodes or when you want to separate compute from storage.
+</ParamField>
+
+<ParamField path="-t, --tag" type="string" repeatable>
+  Optional tags to add to the node. Can be specified multiple times.
+  
+  Tags are metadata for organizing nodes. They don't affect data placement.
+</ParamField>
+
+<ParamField path="--replace" type="string" repeatable>
+  Node ID(s) to be replaced by the new node.
+  
+  Used when replacing failed nodes. Data from the old node will be migrated to the new node.
+</ParamField>
+
+### layout remove
+
+Remove a node's role from the cluster.
+
+```bash
+garage layout remove <NODE_ID>
+```
+
+<ParamField path="NODE_ID" type="string" required>
+  Node ID (or prefix) whose role should be removed.
+</ParamField>
+
+Removing a node stages the removal but doesn't immediately delete data. After applying, Garage will migrate data off the removed node.
+
+### layout config
+
+Configure layout computation parameters.
+
+```bash
+garage layout config [OPTIONS]
+```
+
+<ParamField path="-r, --redundancy" type="string">
+  Zone redundancy parameter. Can be:
+  - `none` or `max` or `maximum`: Maximum possible redundancy
+  - An integer: Minimum number of zones that must store each data block
+  
+  Example: `-r 3` ensures data is stored in at least 3 different zones.
+</ParamField>
+
+### layout apply
+
+Apply staged layout changes to the cluster.
+
+```bash
+garage layout apply --version <VERSION>
+```
+
+<ParamField path="--version" type="integer" required>
+  Version number of the new layout. Must be exactly current_version + 1.
+  
+  This ensures you're applying the expected changes. Get the version from `garage layout show`.
+</ParamField>
+
+Applying the layout triggers data rebalancing across the cluster.
+
+### layout revert
+
+Cancel all staged layout changes.
+
+```bash
+garage layout revert --yes
+```
+
+<ParamField path="--yes" type="flag" required>
+  Confirm the revert operation.
+  
+  Required to prevent accidental reverts.
+</ParamField>
+
+### layout history
+
+View the history of layout versions in the cluster.
+
+```bash
+garage layout history
+```
+
+Shows:
+- All layout versions with timestamps
+- Status of each version (Active, Acknowledged, Historical)
+- Update trackers showing sync progress across nodes
+
+### layout skip-dead-nodes
+
+Force progress when awaiting layout synchronization, skipping dead nodes.
+
+```bash
+garage layout skip-dead-nodes --version <VERSION> [--allow-missing-data]
+```
+
+<ParamField path="--version" type="integer" required>
+  Layout version to assume is current.
+  
+  Typically the current layout version shown in `garage layout history`.
+</ParamField>
+
+<ParamField path="--allow-missing-data" type="flag">
+  Skip even if a quorum cannot be reached for the data.
+  
+  **Warning**: This may result in data loss if nodes are permanently offline.
+</ParamField>
+
+## Examples
+
+### View Current Layout
+
+```bash
+garage layout show
+```
+
+Output:
+```
+==== CURRENT CLUSTER LAYOUT ====
+ID              Tags    Zone    Capacity    Usable capacity
+1234567890ab    []      dc1     100 GB      97 GB (97.0%)
+abcdef123456    []      dc1     100 GB      97 GB (97.0%)
+
+Zone redundancy: 3
+Current cluster layout version: 5
+```
+
+### Add First Node to Cluster
+
+```bash
+# Get node ID
+NODE_ID=$(garage node id --quiet | cut -d'@' -f1)
+
+# Assign role: zone dc1, capacity 100GB
+garage layout assign -z dc1 -c 100GB $NODE_ID
+
+# View staged changes
+garage layout show
+
+# Apply layout (version goes from 0 to 1)
+garage layout apply --version 1
+```
+
+### Add Storage Node to Existing Cluster
+
+```bash
+# Assign role to node
+garage layout assign -z dc2 -c 500GB 98765432
+
+# Review changes
+garage layout show
+
+# Apply if everything looks good
+garage layout apply --version 6
+```
+
+### Add Gateway-Only Node
+
+```bash
+# Gateway nodes don't store data
+garage layout assign -z dc1 -g abcdef12
+
+garage layout show
+garage layout apply --version 7
+```
+
+### Add Node with Tags
+
+```bash
+garage layout assign -z dc1 -c 1TB -t ssd -t rack1 -t critical fedcba98
+
+garage layout show
+garage layout apply --version 8
+```
+
+### Replace a Failed Node
+
+```bash
+# New node replaces old node
+garage layout assign -z dc1 -c 100GB --replace 11111111 22222222
+
+garage layout show
+garage layout apply --version 9
+```
+
+Garage will migrate data from node `11111111` to node `22222222`.
+
+### Remove a Node
+
+```bash
+# Stage removal
+garage layout remove 1234abcd
+
+# Review - shows data will be redistributed
+garage layout show
+
+# Apply removal
+garage layout apply --version 10
+```
+
+After applying, Garage migrates data off the removed node to other nodes.
+
+### Change Node Capacity
+
+```bash
+# To change capacity, reassign with new value
+garage layout assign -z dc1 -c 2TB 1234abcd
+
+garage layout show
+garage layout apply --version 11
+```
+
+Garage will rebalance to match the new capacity.
+
+### Configure Zone Redundancy
+
+```bash
+# Ensure data is in at least 3 zones
+garage layout config -r 3
+
+garage layout show
+garage layout apply --version 12
+```
+
+### Cancel Staged Changes
+
+```bash
+# Made a mistake? Revert staged changes
+garage layout revert --yes
+```
+
+All staged changes are discarded. The current layout remains unchanged.
+
+### Multi-Node Assignment
+
+```bash
+# Assign roles to multiple nodes at once
+garage layout assign -z dc1 -c 100GB aaaa1111 bbbb2222 cccc3333
+
+garage layout show
+garage layout apply --version 13
+```
+
+## Understanding Zones
+
+Zones represent failure domains. Examples:
+- Physical datacenters
+- Availability zones in cloud
+- Different racks
+- Different buildings
+
+Garage ensures data redundancy across zones. If you set zone redundancy to 3, each piece of data is stored in at least 3 different zones.
+
+### Zone Examples
+
+```bash
+# Three datacenters
+garage layout assign -z us-east-1 -c 1TB node1
+garage layout assign -z us-west-1 -c 1TB node2
+garage layout assign -z eu-central-1 -c 1TB node3
+
+# Multiple nodes per zone
+garage layout assign -z dc1 -c 500GB node1 node2
+garage layout assign -z dc2 -c 500GB node3 node4
+garage layout assign -z dc3 -c 500GB node5 node6
+```
+
+## Understanding Capacity
+
+Capacity controls data distribution:
+
+- **Proportional distribution**: A 2TB node gets 2x the data of a 1TB node
+- **Automatic balancing**: Garage distributes data to match capacity ratios
+- **Flexible units**: Use GB, TB, or any convenient unit
+
+### Capacity Examples
+
+```bash
+# Balanced cluster: each node gets 33% of data
+garage layout assign -z dc1 -c 1TB node1
+garage layout assign -z dc2 -c 1TB node2
+garage layout assign -z dc3 -c 1TB node3
+
+# Unbalanced: node1 gets 50%, node2 and node3 each get 25%
+garage layout assign -z dc1 -c 2TB node1
+garage layout assign -z dc2 -c 1TB node2
+garage layout assign -z dc3 -c 1TB node3
+```
+
+## Layout Versioning
+
+Every layout change increments the version number:
+
+1. Initial layout: version 1
+2. Add a node: version 2
+3. Change capacity: version 3
+4. Remove node: version 4
+
+Version numbers ensure:
+- You're applying the changes you reviewed
+- No conflicting changes from other administrators
+- Clear audit trail of cluster changes
+
+## Data Rebalancing
+
+After applying layout changes:
+
+1. **Immediate**: New writes use the new layout
+2. **Background**: Existing data gradually migrates to match new layout
+3. **Monitoring**: Use `garage layout history` to track migration progress
+
+```bash
+# Check migration status
+garage layout history
+```
+
+Output shows update trackers indicating which nodes have completed synchronization.
+
+## Best Practices
+
+### Always Review Before Applying
+
+```bash
+# GOOD: Review then apply
+garage layout assign -z dc1 -c 1TB newnode
+garage layout show  # REVIEW OUTPUT CAREFULLY
+garage layout apply --version X
+
+# BAD: Apply without reviewing
+garage layout assign -z dc1 -c 1TB newnode
+garage layout apply --version X  # Didn't review!
+```
+
+### Use Descriptive Zones
+
+```bash
+# GOOD: Clear zone names
+garage layout assign -z nyc-datacenter-1 -c 1TB node1
+garage layout assign -z london-datacenter-1 -c 1TB node2
+
+# BAD: Unclear zones
+garage layout assign -z zone1 -c 1TB node1
+garage layout assign -z z2 -c 1TB node2
+```
+
+### Tag Nodes for Organization
+
+```bash
+garage layout assign -z dc1 -c 1TB -t production -t ssd -t rack-a node1
+```
+
+Tags help you understand your infrastructure at a glance.
+
+## Troubleshooting
+
+### Apply Fails with Version Mismatch
+
+Error: "Expected version X but got Y"
+
+Solution:
+```bash
+# Check current version
+garage layout show
+
+# Apply with correct version
+garage layout apply --version <correct-version>
+```
+
+### Migration Takes Too Long
+
+```bash
+# Check progress
+garage layout history
+
+# If nodes are dead/offline
+garage layout skip-dead-nodes --version <version>
+```
+
+### Can't Remove Last Node in Zone
+
+If removing a node would violate zone redundancy, Garage prevents it:
+
+```bash
+# Solution: Lower redundancy first, then remove
+garage layout config -r 2
+garage layout apply --version X
+
+garage layout remove node123
+garage layout apply --version X+1
+```

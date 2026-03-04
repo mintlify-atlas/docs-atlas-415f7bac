@@ -1,0 +1,219 @@
+---
+title: S3 Authentication
+description: AWS Signature Version 4 authentication for Garage S3 API
+---
+
+Garage implements AWS Signature Version 4 authentication for S3 API requests. This page describes how authentication works and how to configure your S3 clients.
+
+## Authentication Methods
+
+Garage supports the following authentication methods:
+
+<CardGroup cols={2}>
+  <Card title="Signature v4" icon="shield-check">
+    Standard AWS authentication using signature version 4
+  </Card>
+  <Card title="Presigned URLs" icon="link">
+    Time-limited URLs with embedded authentication
+  </Card>
+</CardGroup>
+
+<Warning>
+  Signature v2 (deprecated by AWS) is **not supported** by Garage.
+</Warning>
+
+## AWS Signature Version 4
+
+Garage uses the same authentication mechanism as Amazon S3, based on HMAC-SHA256 signatures.
+
+### Request Signing Process
+
+When making authenticated requests to Garage:
+
+1. **Create a canonical request** - Normalize the HTTP request into a standard format
+2. **Create a string to sign** - Combine request metadata with the canonical request hash
+3. **Calculate the signature** - Use your secret key to generate an HMAC-SHA256 signature
+4. **Add signature to request** - Include the signature in the `Authorization` header
+
+### Authorization Header Format
+
+The `Authorization` header follows this format:
+
+```http
+Authorization: AWS4-HMAC-SHA256 Credential={access_key}/{date}/{region}/s3/aws4_request,
+  SignedHeaders={signed_headers},
+  Signature={signature}
+```
+
+<ParamField path="access_key" type="string" required>
+  Your Garage access key ID
+</ParamField>
+
+<ParamField path="date" type="string" required>
+  Date in YYYYMMDD format (e.g., "20260304")
+</ParamField>
+
+<ParamField path="region" type="string" required>
+  The S3 region configured in your Garage instance (default: "garage")
+</ParamField>
+
+<ParamField path="signed_headers" type="string" required>
+  Semicolon-separated list of headers included in the signature
+</ParamField>
+
+<ParamField path="signature" type="string" required>
+  The calculated HMAC-SHA256 signature as hexadecimal string
+</ParamField>
+
+## Presigned URLs
+
+Garage supports presigned URLs that allow temporary access to objects without requiring credentials.
+
+### Creating Presigned URLs
+
+Presigned URLs embed authentication information in query parameters:
+
+```bash
+curl "https://s3.garage.example.com/my-bucket/file.txt?
+  X-Amz-Algorithm=AWS4-HMAC-SHA256&
+  X-Amz-Credential={access_key}/20260304/garage/s3/aws4_request&
+  X-Amz-Date=20260304T120000Z&
+  X-Amz-Expires=3600&
+  X-Amz-SignedHeaders=host&
+  X-Amz-Signature={signature}"
+```
+
+<ParamField query="X-Amz-Algorithm" type="string" required>
+  Signature algorithm, must be `AWS4-HMAC-SHA256`
+</ParamField>
+
+<ParamField query="X-Amz-Credential" type="string" required>
+  Access key and scope in format: `{access_key}/{date}/{region}/s3/aws4_request`
+</ParamField>
+
+<ParamField query="X-Amz-Date" type="string" required>
+  ISO 8601 timestamp when the signature was created
+</ParamField>
+
+<ParamField query="X-Amz-Expires" type="integer" required>
+  Number of seconds until the URL expires (max: 604800 / 7 days)
+</ParamField>
+
+<ParamField query="X-Amz-SignedHeaders" type="string" required>
+  List of headers that were signed
+</ParamField>
+
+<ParamField query="X-Amz-Signature" type="string" required>
+  The presigned URL signature
+</ParamField>
+
+### Example: Generate Presigned URL with AWS CLI
+
+```bash
+aws s3 presign s3://my-bucket/file.txt \
+  --endpoint-url https://s3.garage.example.com \
+  --expires-in 3600
+```
+
+## URL Styles
+
+Garage supports both path-style and virtual-hosted-style URLs:
+
+<CodeGroup>
+```bash Path-style (recommended)
+https://s3.garage.example.com/bucket-name/object-key
+```
+
+```bash Virtual-hosted-style
+https://bucket-name.s3.garage.example.com/object-key
+```
+</CodeGroup>
+
+<Info>
+  Virtual-hosted-style URLs require proper DNS configuration with wildcard support.
+</Info>
+
+## Authentication Errors
+
+Common authentication error responses:
+
+| Error Code | HTTP Status | Description |
+|------------|-------------|-------------|
+| `AccessDenied` | 403 | Invalid credentials or insufficient permissions |
+| `SignatureDoesNotMatch` | 403 | Signature calculation error |
+| `InvalidAccessKeyId` | 403 | Access key does not exist |
+| `RequestTimeTooSkewed` | 403 | Request timestamp is too far from server time |
+| `ExpiredToken` | 400 | Presigned URL has expired |
+
+## Client Configuration
+
+### AWS CLI
+
+```bash
+aws configure set aws_access_key_id GK...
+aws configure set aws_secret_access_key ...
+aws configure set region garage
+aws configure set s3.endpoint_url https://s3.garage.example.com
+```
+
+### boto3 (Python)
+
+```python
+import boto3
+
+s3 = boto3.client('s3',
+    endpoint_url='https://s3.garage.example.com',
+    aws_access_key_id='GK...',
+    aws_secret_access_key='...',
+    region_name='garage'
+)
+```
+
+### AWS SDK for JavaScript
+
+```javascript
+const { S3Client } = require('@aws-sdk/client-s3');
+
+const s3 = new S3Client({
+  endpoint: 'https://s3.garage.example.com',
+  region: 'garage',
+  credentials: {
+    accessKeyId: 'GK...',
+    secretAccessKey: '...'
+  }
+});
+```
+
+## Server-Side Encryption (SSE-C)
+
+Garage supports customer-provided encryption keys (SSE-C):
+
+```bash
+curl -X PUT https://s3.garage.example.com/bucket/object \
+  -H "x-amz-server-side-encryption-customer-algorithm: AES256" \
+  -H "x-amz-server-side-encryption-customer-key: {base64-key}" \
+  -H "x-amz-server-side-encryption-customer-key-MD5: {base64-md5}" \
+  --data-binary @file.txt
+```
+
+<ParamField header="x-amz-server-side-encryption-customer-algorithm" type="string">
+  Encryption algorithm, must be `AES256`
+</ParamField>
+
+<ParamField header="x-amz-server-side-encryption-customer-key" type="string">
+  Base64-encoded 256-bit encryption key
+</ParamField>
+
+<ParamField header="x-amz-server-side-encryption-customer-key-MD5" type="string">
+  Base64-encoded MD5 digest of the encryption key
+</ParamField>
+
+<Warning>
+  SSE-C requires HTTPS. The encryption key must be provided with every request to access encrypted objects.
+</Warning>
+
+## See Also
+
+- [Bucket Operations](/api/s3/bucket-operations)
+- [Object Operations](/api/s3/object-operations)
+- [AWS Signature Version 4 Documentation](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html)

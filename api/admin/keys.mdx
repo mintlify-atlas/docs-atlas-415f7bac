@@ -1,0 +1,559 @@
+---
+title: Key Management
+description: Endpoints for managing S3 access keys and permissions
+---
+
+Key management endpoints allow you to create, update, and manage S3 access keys for your Garage cluster.
+
+## List Keys
+
+Returns all API access keys in the cluster.
+
+```bash
+GET /v2/ListKeys
+```
+
+### Response
+
+<ResponseField name="keys" type="array" required>
+  Array of key information objects
+  
+  <Expandable title="Key Object">
+    <ResponseField name="id" type="string">
+      Access key ID (also used as AWS_ACCESS_KEY_ID)
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      Human-friendly name for the key
+    </ResponseField>
+    
+    <ResponseField name="created" type="string">
+      Creation date (ISO 8601 format)
+    </ResponseField>
+    
+    <ResponseField name="expiration" type="string">
+      Expiration date (ISO 8601 format, null if never expires)
+    </ResponseField>
+    
+    <ResponseField name="expired" type="boolean">
+      Whether the key is currently expired
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  http://localhost:3903/v2/ListKeys | jq
+```
+
+```json
+[
+  {
+    "id": "GK31c2f218a2e44f485b94239e",
+    "name": "my-app-key",
+    "created": "2025-06-15T10:23:45.123Z",
+    "expiration": null,
+    "expired": false
+  },
+  {
+    "id": "GK8a7b3c9d4e5f6a1b2c3d4e5f",
+    "name": "temporary-key",
+    "created": "2025-06-01T08:00:00.000Z",
+    "expiration": "2025-07-01T08:00:00.000Z",
+    "expired": false
+  }
+]
+```
+
+## Get Key Info
+
+Returns detailed information about a specific access key.
+
+```bash
+GET /v2/GetKeyInfo
+```
+
+### Query Parameters
+
+<ParamField query="id" type="string">
+  Exact access key ID to look up
+</ParamField>
+
+<ParamField query="search" type="string">
+  Partial key ID or name to search for
+</ParamField>
+
+<ParamField query="showSecretKey" type="boolean">
+  Whether to return the secret access key (default: false)
+</ParamField>
+
+<Note>
+You must specify exactly one of: `id` or `search`
+</Note>
+
+### Response
+
+<ResponseField name="accessKeyId" type="string" required>
+  Access key ID (AWS_ACCESS_KEY_ID)
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Key name
+</ResponseField>
+
+<ResponseField name="created" type="string">
+  Creation date (ISO 8601)
+</ResponseField>
+
+<ResponseField name="expiration" type="string">
+  Expiration date (ISO 8601, null if never expires)
+</ResponseField>
+
+<ResponseField name="expired" type="boolean" required>
+  Whether the key is currently expired
+</ResponseField>
+
+<ResponseField name="secretAccessKey" type="string">
+  Secret access key (AWS_SECRET_ACCESS_KEY). Only returned if `showSecretKey=true`
+</ResponseField>
+
+<ResponseField name="permissions" type="object" required>
+  Key-level permissions
+  
+  <Expandable title="Permissions">
+    <ResponseField name="createBucket" type="boolean">
+      Whether this key can create new buckets
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="buckets" type="array" required>
+  Buckets this key has access to
+  
+  <Expandable title="Bucket Object">
+    <ResponseField name="id" type="string">
+      Bucket ID (hex-encoded)
+    </ResponseField>
+    
+    <ResponseField name="globalAliases" type="array">
+      Global aliases for this bucket
+    </ResponseField>
+    
+    <ResponseField name="localAliases" type="array">
+      Local aliases for this bucket under this key
+    </ResponseField>
+    
+    <ResponseField name="permissions" type="object">
+      Permissions this key has on this bucket
+      
+      <Expandable title="Permissions">
+        <ResponseField name="read" type="boolean">
+          Read permission
+        </ResponseField>
+        
+        <ResponseField name="write" type="boolean">
+          Write permission
+        </ResponseField>
+        
+        <ResponseField name="owner" type="boolean">
+          Owner permission
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  'http://localhost:3903/v2/GetKeyInfo?id=GK31c2f218a2e44f485b94239e&showSecretKey=true' | jq
+```
+
+```json
+{
+  "accessKeyId": "GK31c2f218a2e44f485b94239e",
+  "name": "my-app-key",
+  "created": "2025-06-15T10:23:45.123Z",
+  "expiration": null,
+  "expired": false,
+  "secretAccessKey": "b8d57c3f9e2a1b4c6d8e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1",
+  "permissions": {
+    "createBucket": false
+  },
+  "buckets": [
+    {
+      "id": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+      "globalAliases": ["my-bucket"],
+      "localAliases": ["my-local-bucket"],
+      "permissions": {
+        "read": true,
+        "write": true,
+        "owner": false
+      }
+    }
+  ]
+}
+```
+
+## Create Key
+
+Creates a new API access key.
+
+```bash
+POST /v2/CreateKey
+```
+
+### Request Body
+
+<ParamField body="name" type="string">
+  Human-friendly name for the key
+</ParamField>
+
+<ParamField body="expiration" type="string">
+  Expiration date (ISO 8601 format)
+</ParamField>
+
+<ParamField body="neverExpires" type="boolean">
+  Set to true if the key should never expire (default: true)
+</ParamField>
+
+<ParamField body="allow" type="object">
+  Permissions to grant
+  
+  <Expandable title="Permissions">
+    <ParamField body="createBucket" type="boolean">
+      Allow creating new buckets
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<Note>
+The access key ID and secret key are automatically generated by Garage.
+</Note>
+
+### Response
+
+Returns the same response as `GetKeyInfo`, including the `secretAccessKey` field.
+
+<Warning>
+The secret access key is returned only once upon creation. Save it securely!
+</Warning>
+
+### Example
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "my-new-key",
+    "neverExpires": true,
+    "allow": {
+      "createBucket": false
+    }
+  }' \
+  http://localhost:3903/v2/CreateKey
+```
+
+```json
+{
+  "accessKeyId": "GK9f8e7d6c5b4a3928171615",
+  "name": "my-new-key",
+  "created": "2025-06-15T14:30:00.000Z",
+  "expiration": null,
+  "expired": false,
+  "secretAccessKey": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+  "permissions": {
+    "createBucket": false
+  },
+  "buckets": []
+}
+```
+
+## Import Key
+
+Imports an existing API key with known credentials.
+
+```bash
+POST /v2/ImportKey
+```
+
+<Warning>
+**This feature should only be used for migrations and backup restore.** Do not use it to generate custom key identifiers or you will break your Garage cluster.
+</Warning>
+
+### Request Body
+
+<ParamField body="accessKeyId" type="string" required>
+  Access key ID to import
+</ParamField>
+
+<ParamField body="secretAccessKey" type="string" required>
+  Secret access key to import
+</ParamField>
+
+<ParamField body="name" type="string">
+  Human-friendly name for the key (default: "Imported key")
+</ParamField>
+
+### Response
+
+Returns the same response as `GetKeyInfo`, but without the `secretAccessKey` field.
+
+### Example
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "accessKeyId": "GK1234567890abcdef123456",
+    "secretAccessKey": "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+    "name": "migrated-key"
+  }' \
+  http://localhost:3903/v2/ImportKey
+```
+
+## Update Key
+
+Updates information about an existing access key.
+
+```bash
+POST /v2/UpdateKey?id=<key-id>
+```
+
+### Query Parameters
+
+<ParamField query="id" type="string" required>
+  Access key ID to update
+</ParamField>
+
+### Request Body
+
+<ParamField body="name" type="string">
+  New name for the key
+</ParamField>
+
+<ParamField body="expiration" type="string">
+  New expiration date (ISO 8601 format)
+</ParamField>
+
+<ParamField body="neverExpires" type="boolean">
+  Set to true to remove expiration
+</ParamField>
+
+<ParamField body="allow" type="object">
+  Permissions to grant
+  
+  <Expandable title="Permissions">
+    <ParamField body="createBucket" type="boolean">
+      Allow creating new buckets
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="deny" type="object">
+  Permissions to revoke
+  
+  <Expandable title="Permissions">
+    <ParamField body="createBucket" type="boolean">
+      Deny creating new buckets
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<Note>
+The secret access key is not returned in the response. It cannot be changed after key creation.
+</Note>
+
+### Response
+
+Returns the same response as `GetKeyInfo`, with `secretAccessKey` set to `null`.
+
+### Example: Rename Key
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "updated-key-name"}' \
+  'http://localhost:3903/v2/UpdateKey?id=GK31c2f218a2e44f485b94239e'
+```
+
+### Example: Set Expiration
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{"expiration": "2025-12-31T23:59:59Z"}' \
+  'http://localhost:3903/v2/UpdateKey?id=GK31c2f218a2e44f485b94239e'
+```
+
+### Example: Grant Permission
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "allow": {
+      "createBucket": true
+    }
+  }' \
+  'http://localhost:3903/v2/UpdateKey?id=GK31c2f218a2e44f485b94239e'
+```
+
+### Example: Revoke Permission
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "deny": {
+      "createBucket": true
+    }
+  }' \
+  'http://localhost:3903/v2/UpdateKey?id=GK31c2f218a2e44f485b94239e'
+```
+
+## Delete Key
+
+Deletes an access key from the cluster.
+
+```bash
+POST /v2/DeleteKey?id=<key-id>
+```
+
+### Query Parameters
+
+<ParamField query="id" type="string" required>
+  Access key ID to delete
+</ParamField>
+
+<Warning>
+The key's access will be removed from all buckets. Buckets are not automatically deleted and may become dangling. You should manually clean them up before deleting keys.
+</Warning>
+
+### Example
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  'http://localhost:3903/v2/DeleteKey?id=GK31c2f218a2e44f485b94239e'
+```
+
+### Response
+
+Returns `200 OK` on success with an empty response body.
+
+## Key Permissions on Buckets
+
+Key permissions on buckets are managed using the bucket management endpoints:
+
+- **Grant permissions**: Use [`AllowBucketKey`](/api/admin/buckets#allow-bucket-key)
+- **Revoke permissions**: Use [`DenyBucketKey`](/api/admin/buckets#deny-bucket-key)
+
+These endpoints allow you to control read, write, and owner permissions for specific keys on specific buckets.
+
+## Permission Levels
+
+### Key-Level Permissions
+
+- **createBucket**: Allows the key to create new buckets using the S3 API
+
+### Bucket-Level Permissions
+
+- **read**: Allows reading objects from the bucket
+- **write**: Allows creating, updating, and deleting objects in the bucket
+- **owner**: Allows managing bucket configuration (website, quotas, etc.)
+
+<Note>
+Owner permission on a bucket also implicitly grants read and write permissions.
+</Note>
+
+## Key Naming Best Practices
+
+1. Use descriptive names that indicate the key's purpose:
+   - `production-app-key`
+   - `backup-service-key`
+   - `dev-environment-key`
+
+2. Include environment or application identifiers
+
+3. Use expiration dates for temporary or shared keys
+
+4. Avoid generic names like "key1" or "test"
+
+## Security Best Practices
+
+1. **Rotate keys regularly**: Create new keys and delete old ones periodically
+
+2. **Use expiration dates**: Set expiration for keys that don't need permanent access
+
+3. **Principle of least privilege**: Grant only the minimum required permissions
+
+4. **Store secrets securely**: Never commit secret keys to version control
+
+5. **Monitor key usage**: Use Garage metrics to track key activity
+
+6. **Delete unused keys**: Remove keys that are no longer needed
+
+7. **Use separate keys**: Don't share keys between different applications or environments
+
+## Example: Complete Key Lifecycle
+
+### 1. Create a key
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "app-production-key"}' \
+  http://localhost:3903/v2/CreateKey
+```
+
+### 2. Grant permissions on a bucket
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "bucketId": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+    "accessKeyId": "GK9f8e7d6c5b4a3928171615",
+    "permissions": {"read": true, "write": true, "owner": false}
+  }' \
+  http://localhost:3903/v2/AllowBucketKey
+```
+
+### 3. Use the key with S3 client
+
+```bash
+export AWS_ACCESS_KEY_ID="GK9f8e7d6c5b4a3928171615"
+export AWS_SECRET_ACCESS_KEY="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+
+aws s3 ls s3://my-bucket --endpoint-url https://s3.garage.local
+```
+
+### 4. Rotate the key (create new, update app, delete old)
+
+```bash
+# Create new key
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "app-production-key-v2"}' \
+  http://localhost:3903/v2/CreateKey
+
+# Grant same permissions
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "bucketId": "70ec0cd3e60f0a6f934a1f1ab1e0c84e4b0e3e5a1c7e3b4a",
+    "accessKeyId": "<NEW_KEY_ID>",
+    "permissions": {"read": true, "write": true, "owner": false}
+  }' \
+  http://localhost:3903/v2/AllowBucketKey
+
+# Update application configuration with new credentials
+# ...
+
+# Delete old key after verification
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  'http://localhost:3903/v2/DeleteKey?id=GK9f8e7d6c5b4a3928171615'
+```

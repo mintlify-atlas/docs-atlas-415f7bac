@@ -1,0 +1,641 @@
+---
+title: garage bucket
+description: Manage S3 buckets
+---
+
+## Description
+
+The `garage bucket` commands provide comprehensive bucket management functionality, including creating and deleting buckets, managing permissions, configuring website hosting, setting quotas, and inspecting bucket contents.
+
+## Usage
+
+```bash
+garage bucket <SUBCOMMAND> [OPTIONS]
+```
+
+## Subcommands
+
+### bucket list
+
+List all buckets in the cluster.
+
+```bash
+garage bucket list
+```
+
+Displays a table with bucket IDs, creation dates, global aliases, and local aliases.
+
+### bucket info
+
+Get detailed information about a specific bucket.
+
+```bash
+garage bucket info <BUCKET_NAME>
+```
+
+<ParamField path="BUCKET_NAME" type="string" required>
+  Name or ID of the bucket to inspect.
+</ParamField>
+
+### bucket create
+
+Create a new bucket.
+
+```bash
+garage bucket create <BUCKET_NAME>
+```
+
+<ParamField path="BUCKET_NAME" type="string" required>
+  Name for the new bucket. This becomes a global alias.
+</ParamField>
+
+### bucket delete
+
+Delete a bucket.
+
+```bash
+garage bucket delete [OPTIONS] <BUCKET_NAME>
+```
+
+<ParamField path="BUCKET_NAME" type="string" required>
+  Name of the bucket to delete.
+</ParamField>
+
+<ParamField path="--yes" type="flag" required>
+  Confirm deletion. Required to prevent accidental deletions.
+</ParamField>
+
+The bucket must be empty and have no other aliases before deletion.
+
+### bucket alias
+
+Create an alias for a bucket.
+
+```bash
+garage bucket alias [OPTIONS] <EXISTING_BUCKET> <NEW_NAME>
+```
+
+<ParamField path="EXISTING_BUCKET" type="string" required>
+  Existing bucket name (global alias) or full UUID.
+</ParamField>
+
+<ParamField path="NEW_NAME" type="string" required>
+  New alias name for the bucket.
+</ParamField>
+
+<ParamField path="--local" type="string">
+  Access key ID to make this a local alias (only visible to that key).
+  
+  If omitted, creates a global alias visible to all keys.
+</ParamField>
+
+### bucket unalias
+
+Remove an alias from a bucket.
+
+```bash
+garage bucket unalias [OPTIONS] <BUCKET_NAME>
+```
+
+<ParamField path="BUCKET_NAME" type="string" required>
+  Alias name to remove.
+</ParamField>
+
+<ParamField path="--local" type="string">
+  Access key ID if removing a local alias.
+</ParamField>
+
+### bucket allow
+
+Grant permissions on a bucket to an access key.
+
+```bash
+garage bucket allow [OPTIONS] --key <KEY> <BUCKET>
+```
+
+<ParamField path="BUCKET" type="string" required>
+  Name or ID of the bucket.
+</ParamField>
+
+<ParamField path="--key" type="string" required>
+  Access key name or ID to grant permissions to.
+</ParamField>
+
+<ParamField path="--read" type="flag">
+  Grant read permission (GET, LIST operations).
+</ParamField>
+
+<ParamField path="--write" type="flag">
+  Grant write permission (PUT, DELETE operations).
+</ParamField>
+
+<ParamField path="--owner" type="flag">
+  Grant owner permission (bucket configuration changes).
+</ParamField>
+
+### bucket deny
+
+Revoke permissions on a bucket from an access key.
+
+```bash
+garage bucket deny [OPTIONS] --key <KEY> <BUCKET>
+```
+
+Parameters are the same as `bucket allow`.
+
+### bucket website
+
+Configure bucket as a static website.
+
+```bash
+garage bucket website [OPTIONS] <BUCKET>
+```
+
+<ParamField path="BUCKET" type="string" required>
+  Name of the bucket.
+</ParamField>
+
+<ParamField path="--allow" type="flag">
+  Enable website hosting for the bucket.
+  
+  Exactly one of `--allow` or `--deny` must be specified.
+</ParamField>
+
+<ParamField path="--deny" type="flag">
+  Disable website hosting for the bucket.
+</ParamField>
+
+<ParamField path="-i, --index-document" type="string" default="index.html">
+  Index document (suffix appended to paths ending with /).
+</ParamField>
+
+<ParamField path="-e, --error-document" type="string">
+  Optional error document returned when errors occur.
+</ParamField>
+
+### bucket set-quotas
+
+Set size and object count quotas for a bucket.
+
+```bash
+garage bucket set-quotas [OPTIONS] <BUCKET>
+```
+
+<ParamField path="BUCKET" type="string" required>
+  Name of the bucket.
+</ParamField>
+
+<ParamField path="--max-size" type="string">
+  Maximum bucket size (e.g., `10GB`, `1TB`) or `none` to remove limit.
+</ParamField>
+
+<ParamField path="--max-objects" type="string">
+  Maximum number of objects or `none` to remove limit.
+</ParamField>
+
+### bucket cleanup-incomplete-uploads
+
+Abort old incomplete multipart uploads.
+
+```bash
+garage bucket cleanup-incomplete-uploads [OPTIONS] <BUCKET>...
+```
+
+<ParamField path="BUCKET" type="string" required repeatable>
+  One or more bucket names to clean up.
+</ParamField>
+
+<ParamField path="--older-than" type="string" default="1d">
+  Abort uploads older than this duration.
+  
+  Examples: `1d`, `12h`, `30m`, `1w`
+</ParamField>
+
+### bucket inspect-object
+
+Inspect internal details of an object in a bucket.
+
+```bash
+garage bucket inspect-object <BUCKET> <KEY>
+```
+
+<ParamField path="BUCKET" type="string" required>
+  Bucket name or ID.
+</ParamField>
+
+<ParamField path="KEY" type="string" required>
+  Object key to inspect.
+</ParamField>
+
+## Examples
+
+### List All Buckets
+
+```bash
+garage bucket list
+```
+
+Output:
+```
+ID              Created     Global aliases  Local aliases
+1a2b3c4d5e6f    2024-01-15  my-bucket       
+fedcba987654    2024-01-16  photos          alice:pics
+```
+
+### Create a Bucket
+
+```bash
+garage bucket create my-new-bucket
+```
+
+Output:
+```
+==== BUCKET INFORMATION ====
+Bucket:          1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f
+Created:         2024-03-04 10:30:45 +00:00
+
+Size:            0 B (0 B)
+Objects:         0
+
+Website access:  false
+
+Global alias:    my-new-bucket
+
+==== KEYS FOR THIS BUCKET ====
+Permissions  Access key  Local aliases
+(no keys configured)
+```
+
+### Get Bucket Information
+
+```bash
+garage bucket info my-bucket
+```
+
+Output:
+```
+==== BUCKET INFORMATION ====
+Bucket:          1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f
+Created:         2024-01-15 14:23:11 +00:00
+
+Size:            2.5 GB (2.68 GiB)
+Objects:         1234
+
+Website access:  true
+  index document:    index.html
+  error document:    error.html
+
+Global alias:    my-bucket
+
+==== KEYS FOR THIS BUCKET ====
+Permissions  Access key          Local aliases
+RW           GK1a2b3c4d5e6f      
+R            GK9876543210ab      backup
+```
+
+### Grant Bucket Permissions
+
+```bash
+# Grant read and write permissions
+garage bucket allow --key alice-key --read --write my-bucket
+
+# Grant all permissions (read, write, owner)
+garage bucket allow --key admin-key --read --write --owner my-bucket
+
+# Grant read-only access
+garage bucket allow --key readonly-key --read my-bucket
+```
+
+### Revoke Bucket Permissions
+
+```bash
+# Revoke write permission (keep read)
+garage bucket deny --key alice-key --write my-bucket
+
+# Revoke all permissions
+garage bucket deny --key bob-key --read --write --owner my-bucket
+```
+
+### Create Global Alias
+
+```bash
+# Alias an existing bucket with a new name
+garage bucket alias my-bucket production-data
+
+# Now accessible as both "my-bucket" and "production-data"
+```
+
+### Create Local Alias
+
+```bash
+# Create alias visible only to specific access key
+garage bucket alias --local GK1234567890 my-bucket alice-personal
+
+# Alice's key can now access bucket as "alice-personal"
+# Other keys still see it as "my-bucket"
+```
+
+### Remove Alias
+
+```bash
+# Remove global alias
+garage bucket unalias old-name
+
+# Remove local alias
+garage bucket unalias --local GK1234567890 alice-personal
+```
+
+### Enable Website Hosting
+
+```bash
+# Enable with default settings
+garage bucket website --allow my-site
+
+# Enable with custom index and error pages
+garage bucket website --allow -i home.html -e 404.html my-site
+```
+
+Now accessible via website endpoint: `http://my-site.web.garage.local/`
+
+### Disable Website Hosting
+
+```bash
+garage bucket website --deny my-site
+```
+
+### Set Bucket Quotas
+
+```bash
+# Set size limit
+garage bucket set-quotas --max-size 10GB my-bucket
+
+# Set object count limit
+garage bucket set-quotas --max-objects 100000 my-bucket
+
+# Set both limits
+garage bucket set-quotas --max-size 100GB --max-objects 1000000 my-bucket
+
+# Remove size limit
+garage bucket set-quotas --max-size none my-bucket
+
+# Remove all limits
+garage bucket set-quotas --max-size none --max-objects none my-bucket
+```
+
+### Clean Up Old Uploads
+
+```bash
+# Clean uploads older than 1 day (default)
+garage bucket cleanup-incomplete-uploads my-bucket
+
+# Clean uploads older than 7 days
+garage bucket cleanup-incomplete-uploads --older-than 7d my-bucket
+
+# Clean multiple buckets
+garage bucket cleanup-incomplete-uploads --older-than 12h bucket1 bucket2 bucket3
+```
+
+Output:
+```
+1a2b3c4d5e6f: 5 uploads deleted
+fedcba987654: no uploads deleted
+```
+
+### Inspect Object Details
+
+```bash
+garage bucket inspect-object my-bucket path/to/file.jpg
+```
+
+Output:
+```
+==== OBJECT VERSION ====
+Bucket ID:       1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f1a2b3c4d5e6f
+Key:             path/to/file.jpg
+Version ID:      a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Timestamp:       1709550645000
+Size:            2.5 MB (2.62 MiB)
+Size (exact):    2621440
+Number of blocks: 3
+Etag:            "d41d8cd98f00b204e9800998ecf8427e"
+Encrypted:       false
+Uploading:       false
+Aborted:         false
+Delete marker:   false
+Inline data:     false
+
+Content-Type     image/jpeg
+Cache-Control    max-age=3600
+
+Part#  Offset    Block hash                                                        Size
+   1         0  a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6    1048576
+   2   1048576  fedcba9876543210fedcba9876543210fedcba9876543210fedcba98765432    1048576
+   3   2097152  1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd     524288
+```
+
+### Delete a Bucket
+
+```bash
+# Attempt to delete (will show error if bucket not empty)
+garage bucket delete my-bucket
+
+# Confirm deletion
+garage bucket delete --yes my-bucket
+```
+
+Note: Bucket must be empty and have no other aliases.
+
+## Bucket Permissions
+
+Three permission levels:
+
+- **Read**: GET, HEAD, LIST operations
+- **Write**: PUT, POST, DELETE operations on objects
+- **Owner**: Bucket configuration (website, quotas, deletion)
+
+### Permission Examples
+
+```bash
+# Read-only access (e.g., for backups)
+garage bucket allow --key backup-key --read my-bucket
+
+# Read-write access (e.g., for applications)
+garage bucket allow --key app-key --read --write my-bucket
+
+# Full access (e.g., for administrators)
+garage bucket allow --key admin-key --read --write --owner my-bucket
+```
+
+## Global vs Local Aliases
+
+### Global Aliases
+- Visible to all access keys
+- Used for shared buckets
+- Created with `bucket create` or `bucket alias`
+
+### Local Aliases
+- Visible only to specific access key
+- Used for per-user namespaces
+- Created with `bucket alias --local`
+
+### Example Scenario
+
+```bash
+# Create bucket with global name
+garage bucket create shared-data
+
+# Give Alice access with her own alias
+garage bucket allow --key alice-key --read --write shared-data
+garage bucket alias --local GKalice1234 shared-data my-data
+
+# Alice sees bucket as "my-data"
+# Everyone else sees it as "shared-data"
+```
+
+## Website Hosting
+
+When website hosting is enabled:
+
+1. Objects are accessible via HTTP GET without authentication
+2. Paths ending in `/` append the index document
+3. Errors return the error document (if configured)
+
+### Website Configuration Example
+
+```bash
+# Enable website
+garage bucket website --allow -i index.html -e error.html my-site
+
+# Upload files
+aws s3 cp index.html s3://my-site/
+aws s3 cp error.html s3://my-site/
+aws s3 cp about.html s3://my-site/
+
+# Access via website endpoint
+curl http://my-site.web.garage.local/
+curl http://my-site.web.garage.local/about.html
+```
+
+## Quotas
+
+Quotas prevent buckets from consuming excessive resources:
+
+- **max-size**: Total bytes in bucket
+- **max-objects**: Total object count
+
+When quota is exceeded:
+- New uploads are rejected with error
+- Existing objects remain accessible
+- Deleting objects frees up quota
+
+### Quota Examples
+
+```bash
+# Limit bucket to 100GB for user data
+garage bucket set-quotas --max-size 100GB user-uploads
+
+# Limit bucket to 10,000 objects for testing
+garage bucket set-quotas --max-objects 10000 test-bucket
+
+# Production bucket: 1TB, 1 million objects
+garage bucket set-quotas --max-size 1TB --max-objects 1000000 production
+```
+
+## Multipart Upload Cleanup
+
+Incomplete multipart uploads consume storage. Clean them periodically:
+
+```bash
+# Daily cleanup (run from cron)
+garage bucket cleanup-incomplete-uploads --older-than 1d my-bucket
+
+# Weekly aggressive cleanup
+garage bucket cleanup-incomplete-uploads --older-than 7d $(garage bucket list | tail -n +2 | cut -f3)
+```
+
+## Best Practices
+
+### Use Descriptive Names
+
+```bash
+# GOOD
+garage bucket create customer-uploads
+garage bucket create cdn-assets
+garage bucket create backup-2024
+
+# BAD
+garage bucket create bucket1
+garage bucket create test
+garage bucket create tmp
+```
+
+### Set Appropriate Quotas
+
+```bash
+# Prevent runaway storage consumption
+garage bucket set-quotas --max-size 500GB user-uploads
+garage bucket set-quotas --max-size 1TB backups
+```
+
+### Regular Cleanup
+
+```bash
+# Add to cron: cleanup weekly
+0 0 * * 0 garage bucket cleanup-incomplete-uploads --older-than 7d my-bucket
+```
+
+### Use Local Aliases for Multi-Tenancy
+
+```bash
+# Each user sees their own namespace
+garage bucket alias --local GKalice shared-bucket alice-files
+garage bucket alias --local GKbob shared-bucket bob-files
+```
+
+## Troubleshooting
+
+### Can't Delete Bucket
+
+Error: "Bucket still has other aliases"
+
+Solution:
+```bash
+# List all aliases
+garage bucket info my-bucket
+
+# Remove each alias
+garage bucket unalias other-name
+garage bucket unalias --local GKsomekey local-name
+
+# Now delete
+garage bucket delete --yes my-bucket
+```
+
+### Quota Exceeded
+
+Error when uploading: "Quota exceeded"
+
+Solution:
+```bash
+# Check current usage
+garage bucket info my-bucket
+
+# Increase quota
+garage bucket set-quotas --max-size 200GB my-bucket
+
+# Or remove quota
+garage bucket set-quotas --max-size none my-bucket
+```
+
+### Permission Denied
+
+Error: "Access Denied"
+
+Solution:
+```bash
+# Check permissions
+garage bucket info my-bucket
+
+# Grant necessary permissions
+garage bucket allow --key GK1234 --read --write my-bucket
+```

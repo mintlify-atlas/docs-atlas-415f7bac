@@ -1,0 +1,374 @@
+---
+title: 'Multi-HDD Setup'
+description: 'Configure and manage Garage nodes with multiple storage drives'
+---
+
+Since v0.9, Garage natively supports nodes with multiple storage drives for data blocks (metadata storage still uses a single location).
+
+## Initial Setup
+
+To configure a Garage node with multiple HDDs:
+
+1. **Format and mount** all drives in different directories
+
+2. **Configure Garage** with multiple data directories:
+
+```toml
+data_dir = [
+    { path = "/path/to/hdd1", capacity = "2T" },
+    { path = "/path/to/hdd2", capacity = "4T" },
+]
+```
+
+Garage automatically balances blocks among directories proportionally to their specified capacities.
+
+## Example Configuration
+
+```toml
+metadata_dir = "/var/lib/garage/meta"
+
+data_dir = [
+    { path = "/mnt/hdd1/garage", capacity = "2TB" },
+    { path = "/mnt/hdd2/garage", capacity = "2TB" },
+    { path = "/mnt/hdd3/garage", capacity = "4TB" },
+]
+
+replication_mode = "3"
+```
+
+In this example:
+- hdd1 stores ~25% of data (2TB of 8TB total)
+- hdd2 stores ~25% of data (2TB of 8TB total)
+- hdd3 stores ~50% of data (4TB of 8TB total)
+
+## How Multi-HDD Works
+
+### Hash Slice Distribution
+
+Garage divides all possible block hashes into **1024 fixed slices** and assigns each slice a **primary storage location** among your data directories.
+
+The number of slices per directory is proportional to its specified capacity.
+
+### Write Operations
+
+When Garage receives a block to write:
+1. It calculates which slice the block hash belongs to
+2. It writes the block to that slice's primary directory
+
+### Read Operations
+
+When Garage needs to read a block:
+1. It checks the primary directory for the block's slice
+2. If not found, it checks secondary directories
+3. Secondary directories are previous primary locations where the block might still exist
+
+<Note>
+This strategy allows adding storage locations without immediately moving all existing data.
+</Note>
+
+## Adding Storage Locations
+
+When you add new storage locations, Garage does not automatically rebalance existing data.
+
+### What Happens
+
+1. **Newly written blocks** are balanced proportionally to all specified capacities
+2. **Existing data** stays in its current location
+3. **Opportunistic rebalancing** occurs when blocks are re-written (e.g., object re-upload)
+
+### Example
+
+Original configuration:
+```toml
+data_dir = [
+    { path = "/mnt/hdd1/garage", capacity = "2TB" },
+]
+```
+
+After adding a second drive:
+```toml
+data_dir = [
+    { path = "/mnt/hdd1/garage", capacity = "2TB" },
+    { path = "/mnt/hdd2/garage", capacity = "2TB" },  # New drive
+]
+```
+
+**Result:**
+- hdd1 contains all old data
+- New blocks are split 50/50 between hdd1 and hdd2
+- Old blocks remain on hdd1 until rebalanced
+
+## Rebalancing Strategies
+
+### Lazy Rebalancing (Automatic)
+
+When a block is re-written:
+1. Garage checks if it's in the primary directory
+2. If it's in a secondary directory, Garage:
+   - Writes a new copy to the primary directory
+   - Deletes the secondary copy
+
+**Advantages:**
+- No manual intervention
+- No performance impact
+
+**Disadvantages:**
+- Blocks that are only read (never written) remain unbalanced
+- May never achieve full balance
+
+### Active Rebalancing (Manual)
+
+Explicitly launch a rebalance operation:
+
+```bash
+garage repair rebalance
+```
+
+**What it does:**
+- Moves all blocks to their primary locations
+- Removes secondary location information
+- Ensures optimal distribution
+
+**When to use:**
+- After adding storage locations
+- After changing capacity values
+- To move data out of read-only locations
+- To optimize read performance
+
+<Note>
+Once active rebalancing completes, Garage knows exactly where each block is located, improving access speed.
+</Note>
+
+## Read-Only Storage Locations
+
+Use read-only mode to migrate data from an old drive to new drives.
+
+### Configuration
+
+```toml
+data_dir = [
+    { path = "/path/to/old_data", read_only = true },
+    { path = "/path/to/new_hdd1", capacity = "2T" },
+    { path = "/path/to/new_hdd2", capacity = "4T" },
+]
+```
+
+### Behavior
+
+- **Reads:** Garage can read blocks from the read-only directory
+- **Writes:** No new blocks are written to the read-only directory
+- **Lazy rebalancing:** Blocks are gradually moved to primary directories
+- **Active rebalancing:** Moves all data out immediately
+
+### Migration Process
+
+1. **Mark old drive as read-only** in configuration
+
+2. **Restart Garage** to apply changes
+
+3. **Run active rebalance:**
+
+```bash
+garage repair rebalance
+```
+
+4. **Verify drive is empty:**
+
+```bash
+find /path/to/old_data -type f
+```
+
+This should print nothing if all files have been moved.
+
+5. **Remove from configuration:**
+
+```toml
+data_dir = [
+    { path = "/path/to/new_hdd1", capacity = "2T" },
+    { path = "/path/to/new_hdd2", capacity = "4T" },
+]
+```
+
+6. **Restart Garage**
+
+<Note>
+The old directory may still contain empty subdirectories. These can be safely deleted after removal from the configuration.
+</Note>
+
+## Monitoring Multi-HDD Setup
+
+### Check Disk Space
+
+Garage exports metrics for each volume:
+
+```
+garage_local_disk_avail{volume="data"} 540341960704
+garage_local_disk_total{volume="data"} 763063566336
+```
+
+### Monitor Rebalance Progress
+
+During active rebalancing:
+
+```bash
+garage worker list
+```
+
+Look for the rebalance worker and its status.
+
+### Check Block Distribution
+
+View block manager statistics:
+
+```bash
+garage stats -a
+```
+
+Look for:
+```
+Block manager stats:
+  resync queue length: 0
+```
+
+## Best Practices
+
+### 1. Use Similar Drive Sizes
+
+For best balance, use drives of similar capacity. If using mixed sizes, larger drives will store proportionally more data.
+
+### 2. Set Realistic Capacities
+
+Don't specify the full drive capacity - leave room for:
+- Filesystem overhead (5-10%)
+- Temporary files
+- Future growth
+
+**Example:**
+```toml
+# For 4TB physical drives, specify 3.6TB
+data_dir = [
+    { path = "/mnt/hdd1/garage", capacity = "3.6TB" },
+    { path = "/mnt/hdd2/garage", capacity = "3.6TB" },
+]
+```
+
+### 3. Plan Capacity Changes
+
+When adjusting capacities:
+
+1. Update configuration
+2. Restart Garage
+3. Run `garage repair rebalance`
+4. Monitor until completion
+
+### 4. Test Drive Failures
+
+Simulate drive failures to verify:
+- Garage continues operating with remaining drives
+- Read-only mode works as expected
+- Data migration completes successfully
+
+### 5. Monitor Drive Health
+
+Use SMART monitoring:
+
+```bash
+sudo smartctl -a /dev/sda
+```
+
+Set up alerts for drive problems before failure occurs.
+
+### 6. Document Your Setup
+
+Keep records of:
+- Drive serial numbers and mount points
+- Capacity allocations
+- Last rebalance dates
+- Migration history
+
+## Troubleshooting
+
+### Drive Full Despite Available Capacity
+
+**Cause:** Imbalanced distribution due to missing rebalance.
+
+**Solution:**
+```bash
+garage repair rebalance
+```
+
+### Rebalance Not Completing
+
+**Cause:** Active I/O or large dataset.
+
+**Solution:**
+- Check `garage worker list` for worker status
+- Monitor with `garage stats -a`
+- Be patient - rebalancing terabytes takes time
+
+### Cannot Remove Old Drive from Configuration
+
+**Cause:** Data still present on the drive.
+
+**Solution:**
+
+1. Verify drive is truly empty:
+   ```bash
+   find /path/to/old_data -type f
+   ```
+
+2. If files remain, run rebalance again:
+   ```bash
+   garage repair rebalance
+   ```
+
+### New Drive Not Receiving Data
+
+**Cause:** Configuration not reloaded or rebalance not run.
+
+**Solution:**
+1. Restart Garage to reload configuration
+2. Verify configuration with `garage status`
+3. Run `garage repair rebalance`
+
+## Limitations
+
+<Warning>
+**Metadata storage does not support multiple locations.** Metadata must be stored in a single directory specified by `metadata_dir`.
+
+For metadata redundancy, use:
+- Filesystem-level redundancy (RAID, ZFS, BTRFS)
+- Regular snapshots
+- Hardware RAID controllers with battery-backed cache
+</Warning>
+
+## Performance Considerations
+
+### Sequential vs. Random I/O
+
+- **Sequential writes:** Performance scales with number of drives
+- **Random reads:** May benefit from parallel drive access
+- **Small objects:** More drives provide better concurrency
+
+### Drive Speed Mixing
+
+You can mix HDD and SSD for data storage:
+
+```toml
+data_dir = [
+    { path = "/mnt/ssd/garage", capacity = "500GB" },
+    { path = "/mnt/hdd1/garage", capacity = "4TB" },
+    { path = "/mnt/hdd2/garage", capacity = "4TB" },
+]
+```
+
+<Note>
+Blocks are randomly distributed, so frequently accessed data won't automatically stay on the SSD. For consistent performance, use all SSDs or all HDDs.
+</Note>
+
+## See Also
+
+- [Configuration Reference](/cli/configuration)
+- [Data Durability and Repairs](/operations/durability-repairs)
+- [Disaster Recovery](/operations/recovering)
+- [Monitoring and Metrics](/operations/monitoring)

@@ -1,0 +1,249 @@
+---
+title: garage node
+description: Operations on individual Garage nodes
+---
+
+## Description
+
+The `garage node` command provides operations for managing individual nodes in your Garage cluster, including viewing node identities and connecting isolated nodes.
+
+## Usage
+
+```bash
+garage node <SUBCOMMAND> [OPTIONS]
+```
+
+## Subcommands
+
+### node id
+
+Print the full node ID (public key) and publicly reachable address of the current Garage node.
+
+```bash
+garage node id [OPTIONS]
+```
+
+<ParamField path="-q, --quiet" type="flag">
+  Do not print usage instructions to stderr.
+  
+  When this flag is set, only the node ID and address are printed to stdout, making it suitable for use in scripts.
+</ParamField>
+
+#### Output Format
+
+Without `--quiet`:
+```
+1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef@192.168.1.10:3901
+
+Use this connection string in the `garage node connect` command on other nodes
+to connect them to this node, and in the RPC host parameter to use this node
+for administration tasks.
+```
+
+With `--quiet`:
+```
+1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef@192.168.1.10:3901
+```
+
+### node connect
+
+Connect to a Garage node that is currently isolated from the cluster. This is useful when adding a new node to an existing cluster or reconnecting a node that has become isolated.
+
+```bash
+garage node connect <NODE_ID>
+```
+
+<ParamField path="NODE_ID" type="string" required>
+  Full node ID (public key) and connection address in the format:
+  
+  `<full-node-id>@<ip-or-hostname>:<port>`
+  
+  You can retrieve this information on the target node using `garage node id`.
+</ParamField>
+
+## Examples
+
+### Get Node ID and Address
+
+```bash
+# With usage instructions
+garage node id
+```
+
+Output:
+```
+1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef@192.168.1.10:3901
+
+Use this connection string in the `garage node connect` command on other nodes
+to connect them to this node, and in the RPC host parameter to use this node
+for administration tasks.
+```
+
+### Get Node ID for Scripting
+
+```bash
+# Quiet mode - only output the connection string
+garage node id --quiet
+```
+
+Output:
+```
+1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef@192.168.1.10:3901
+```
+
+Useful in scripts:
+```bash
+#!/bin/bash
+NODE_CONN=$(garage node id --quiet)
+echo "This node: $NODE_CONN"
+```
+
+### Connect to Another Node
+
+On the node you want to add to the cluster:
+
+```bash
+# First, get the connection string from the target node
+# (run this on the existing cluster node)
+garage node id --quiet
+
+# Then connect from the new node
+garage node connect 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef@192.168.1.10:3901
+```
+
+Output:
+```
+Successfully connected to node 1234567890abcdef... at 192.168.1.10:3901
+```
+
+### Adding a New Node to a Cluster
+
+Complete workflow:
+
+```bash
+# Step 1: On the existing cluster node, get the connection string
+NODE1_CONN=$(garage node id --quiet)
+echo $NODE1_CONN
+# Output: abc123...@192.168.1.10:3901
+
+# Step 2: Start the new node (on the new server)
+garage server
+
+# Step 3: On the new node, connect to the cluster
+garage node connect abc123...@192.168.1.10:3901
+
+# Step 4: On any cluster node, verify the new node appears
+garage status
+
+# Step 5: Assign a role to the new node
+garage layout assign -z dc1 -c 100GB def456...
+
+# Step 6: Apply the layout changes
+garage layout show
+garage layout apply --version 2
+```
+
+## Understanding Node IDs
+
+A Garage node ID consists of:
+
+1. **Public Key** (64 hex characters): The node's cryptographic identity
+2. **IP Address or Hostname**: Where the node can be reached
+3. **Port**: The RPC port (typically 3901)
+
+Format: `<public-key>@<address>:<port>`
+
+Example:
+```
+1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef@192.168.1.10:3901
+│                                                                │           │
+└─ 64 hex chars (256-bit public key)                            └─ address  └─ port
+```
+
+## Node Connection Requirements
+
+For nodes to successfully connect:
+
+1. **Network connectivity**: Nodes must be able to reach each other on the RPC port
+2. **RPC secret**: All nodes must share the same RPC secret
+3. **Reachability**: The address in `rpc_public_addr` must be reachable from other nodes
+
+## Using Short Node IDs
+
+In most Garage commands, you can use a **prefix** of the node ID instead of the full 64-character public key:
+
+```bash
+# Instead of the full ID:
+garage layout assign -z dc1 -c 100GB 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+
+# You can use a prefix (minimum 8 characters recommended):
+garage layout assign -z dc1 -c 100GB 12345678
+```
+
+Garage will match the prefix to the full node ID. If multiple nodes match the prefix, you'll get an error.
+
+## Verifying Node Connectivity
+
+After connecting nodes, verify they can communicate:
+
+```bash
+# View cluster status (shows all connected nodes)
+garage status
+```
+
+Output:
+```
+==== HEALTHY NODES ====
+ID              Hostname    Address         Zone  Capacity
+1234567890ab... node1       192.168.1.10    dc1   100 GB
+abcdef123456... node2       192.168.1.11    dc1   100 GB
+
+==== OFFLINE NODES ====
+(none)
+```
+
+## Troubleshooting
+
+### Connection Fails
+
+If `garage node connect` fails:
+
+1. **Verify network connectivity**:
+   ```bash
+   telnet 192.168.1.10 3901
+   ```
+
+2. **Check RPC secret matches**:
+   Ensure all nodes have the same `rpc_secret` in their configuration.
+
+3. **Verify the node is running**:
+   ```bash
+   # On the target node
+   ps aux | grep garage
+   ```
+
+4. **Check firewall rules**:
+   Ensure port 3901 (RPC port) is open between nodes.
+
+### Node Not Appearing in Status
+
+If a node connects but doesn't appear in `garage status`:
+
+1. Wait a few seconds for gossip protocol to propagate
+2. Check logs for errors:
+   ```bash
+   journalctl -u garage -n 100
+   ```
+
+3. Verify RPC secret:
+   Look for authentication errors in logs
+
+### Using rpc_public_addr
+
+If nodes are behind NAT or have multiple network interfaces, configure `rpc_public_addr` in the config file:
+
+```toml
+rpc_public_addr = "203.0.113.10:3901"
+```
+
+This tells other nodes how to reach this node, which is especially important in complex network topologies.

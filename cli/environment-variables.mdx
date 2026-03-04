@@ -1,0 +1,413 @@
+---
+title: Environment Variables
+description: Environment variables for configuring Garage
+---
+
+# Environment Variables
+
+Garage supports several environment variables for configuration. Some variables provide alternative ways to set configuration file options (especially sensitive values), while others can only be set as environment variables.
+
+## Logging Configuration
+
+These environment variables control log output and can only be set as environment variables (not available in config file).
+
+<ParamField path="GARAGE_LOG_TO_SYSLOG" type="string">
+  Send logs to syslog instead of stderr (since v0.9.4).
+  
+  Set to `1` or `true` to enable. Uses the libc `syslog()` function.
+  
+  ```bash
+  export GARAGE_LOG_TO_SYSLOG=true
+  garage server
+  ```
+</ParamField>
+
+<ParamField path="GARAGE_LOG_TO_JOURNALD" type="string">
+  Send logs to systemd-journald instead of stderr (since v1.2.0).
+  
+  Set to `1` or `true` to enable. Uses the native journald protocol.
+  
+  ```bash
+  export GARAGE_LOG_TO_JOURNALD=true
+  garage server
+  ```
+  
+  **Note:** Do not enable both `GARAGE_LOG_TO_SYSLOG` and `GARAGE_LOG_TO_JOURNALD` simultaneously.
+</ParamField>
+
+## RPC Secret Configuration
+
+The RPC secret can be provided through environment variables instead of the configuration file, which is useful for secret management systems.
+
+<ParamField path="GARAGE_RPC_SECRET" type="string">
+  Override `rpc_secret` from configuration file (since v0.8.2).
+  
+  32-byte hex-encoded secret shared by all cluster nodes.
+  
+  ```bash
+  export GARAGE_RPC_SECRET="4425f5c26c5e11581d3223904324dcb5b5d5dfb14e5e7f35e38c595424f5f1e6"
+  garage server
+  ```
+  
+  Generate with:
+  ```bash
+  openssl rand -hex 32
+  ```
+</ParamField>
+
+<ParamField path="GARAGE_RPC_SECRET_FILE" type="string">
+  Path to file containing RPC secret (since v0.8.5/v0.9.1).
+  
+  Alternative to `GARAGE_RPC_SECRET`. Overrides `rpc_secret` and `rpc_secret_file` from config.
+  
+  ```bash
+  export GARAGE_RPC_SECRET_FILE="/run/secrets/garage-rpc-secret"
+  garage server
+  ```
+  
+  File should contain only the 32-byte hex-encoded secret (no newlines or whitespace).
+</ParamField>
+
+## Admin Token Configuration
+
+Admin API tokens can be provided through environment variables for better security.
+
+<ParamField path="GARAGE_ADMIN_TOKEN" type="string">
+  Override `admin.admin_token` from configuration file (since v0.8.2).
+  
+  Bearer token for admin API access.
+  
+  ```bash
+  export GARAGE_ADMIN_TOKEN="UkLeGWEvHnXBqnueR3ISEMWpOnm40jH2tM2HnnL/0F4="
+  garage server
+  ```
+  
+  Generate with:
+  ```bash
+  openssl rand -base64 32
+  ```
+</ParamField>
+
+<ParamField path="GARAGE_ADMIN_TOKEN_FILE" type="string">
+  Path to file containing admin token (since v0.8.5/v0.9.1).
+  
+  Alternative to `GARAGE_ADMIN_TOKEN`. Overrides `admin.admin_token` and `admin.admin_token_file` from config.
+  
+  ```bash
+  export GARAGE_ADMIN_TOKEN_FILE="/run/secrets/garage-admin-token"
+  garage server
+  ```
+</ParamField>
+
+## Metrics Token Configuration
+
+<ParamField path="GARAGE_METRICS_TOKEN" type="string">
+  Override `admin.metrics_token` from configuration file (since v0.8.2).
+  
+  Bearer token for `/metrics` endpoint access.
+  
+  ```bash
+  export GARAGE_METRICS_TOKEN="BCAdFjoa9G0KJR0WXnHHm7fs1ZAbfpI8iIZ+Z/a2NgI="
+  garage server
+  ```
+  
+  Generate with:
+  ```bash
+  openssl rand -base64 32
+  ```
+</ParamField>
+
+<ParamField path="GARAGE_METRICS_TOKEN_FILE" type="string">
+  Path to file containing metrics token (since v0.8.5/v0.9.1).
+  
+  Alternative to `GARAGE_METRICS_TOKEN`. Overrides `admin.metrics_token` and `admin.metrics_token_file` from config.
+  
+  ```bash
+  export GARAGE_METRICS_TOKEN_FILE="/run/secrets/garage-metrics-token"
+  garage server
+  ```
+</ParamField>
+
+## Security Configuration
+
+<ParamField path="GARAGE_ALLOW_WORLD_READABLE_SECRETS" type="string">
+  Override `allow_world_readable_secrets` from configuration file.
+  
+  Bypass permission checks on secret files. Useful with POSIX ACLs or complex permissions.
+  
+  Set to `true` or `1` to enable.
+  
+  ```bash
+  export GARAGE_ALLOW_WORLD_READABLE_SECRETS=true
+  garage server
+  ```
+</ParamField>
+
+## Single-Node Mode Environment Variables
+
+These environment variables are used with the `--single-node` flag to set up a default development environment.
+
+<ParamField path="GARAGE_DEFAULT_ACCESS_KEY" type="string">
+  Access key ID to create in single-node mode with `--default-access-key` flag.
+  
+  ```bash
+  export GARAGE_DEFAULT_ACCESS_KEY="GK1234567890ABCDEFGH"
+  export GARAGE_DEFAULT_SECRET_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  garage server --single-node --default-access-key
+  ```
+</ParamField>
+
+<ParamField path="GARAGE_DEFAULT_SECRET_KEY" type="string">
+  Secret key corresponding to `GARAGE_DEFAULT_ACCESS_KEY`.
+  
+  Required when using `--default-access-key` flag.
+</ParamField>
+
+<ParamField path="GARAGE_DEFAULT_BUCKET" type="string">
+  Bucket name to create in single-node mode with `--default-bucket` flag.
+  
+  The default access key will be granted full permissions on this bucket.
+  
+  ```bash
+  export GARAGE_DEFAULT_ACCESS_KEY="GK1234567890ABCDEFGH"
+  export GARAGE_DEFAULT_SECRET_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  export GARAGE_DEFAULT_BUCKET="my-test-bucket"
+  garage server --single-node --default-bucket
+  ```
+</ParamField>
+
+## Usage Examples
+
+### Docker/Container Deployments
+
+Using environment variables is particularly useful with container orchestration:
+
+```dockerfile
+# Dockerfile
+FROM alpine:latest
+RUN apk add --no-cache garage
+
+ENV GARAGE_LOG_TO_JOURNALD=false
+EXPOSE 3900 3901 3902 3903
+
+ENTRYPOINT ["garage"]
+CMD ["server"]
+```
+
+```yaml
+# docker-compose.yml
+services:
+  garage:
+    image: garage:latest
+    environment:
+      GARAGE_RPC_SECRET_FILE: /run/secrets/rpc_secret
+      GARAGE_ADMIN_TOKEN_FILE: /run/secrets/admin_token
+      GARAGE_METRICS_TOKEN_FILE: /run/secrets/metrics_token
+    secrets:
+      - rpc_secret
+      - admin_token
+      - metrics_token
+    volumes:
+      - ./garage.toml:/etc/garage.toml:ro
+      - garage-data:/var/lib/garage
+
+secrets:
+  rpc_secret:
+    file: ./secrets/rpc_secret.txt
+  admin_token:
+    file: ./secrets/admin_token.txt
+  metrics_token:
+    file: ./secrets/metrics_token.txt
+```
+
+### Kubernetes Deployments
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: garage-secrets
+type: Opaque
+stringData:
+  rpc-secret: "4425f5c26c5e11581d3223904324dcb5b5d5dfb14e5e7f35e38c595424f5f1e6"
+  admin-token: "UkLeGWEvHnXBqnueR3ISEMWpOnm40jH2tM2HnnL/0F4="
+  metrics-token: "BCAdFjoa9G0KJR0WXnHHm7fs1ZAbfpI8iIZ+Z/a2NgI="
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: garage
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: garage
+  template:
+    metadata:
+      labels:
+        app: garage
+    spec:
+      containers:
+      - name: garage
+        image: garage:latest
+        env:
+        - name: GARAGE_RPC_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: garage-secrets
+              key: rpc-secret
+        - name: GARAGE_ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: garage-secrets
+              key: admin-token
+        - name: GARAGE_METRICS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: garage-secrets
+              key: metrics-token
+        - name: GARAGE_LOG_TO_JOURNALD
+          value: "false"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/garage.toml
+          subPath: garage.toml
+        - name: data
+          mountPath: /var/lib/garage
+      volumes:
+      - name: config
+        configMap:
+          name: garage-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: garage-data
+```
+
+### Systemd Service
+
+```ini
+# /etc/systemd/system/garage.service
+[Unit]
+Description=Garage Object Storage
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=garage
+Group=garage
+
+Environment="GARAGE_LOG_TO_JOURNALD=true"
+EnvironmentFile=/etc/garage/secrets.env
+
+ExecStart=/usr/local/bin/garage -c /etc/garage/garage.toml server
+
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/garage
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+# /etc/garage/secrets.env
+GARAGE_RPC_SECRET=4425f5c26c5e11581d3223904324dcb5b5d5dfb14e5e7f35e38c595424f5f1e6
+GARAGE_ADMIN_TOKEN=UkLeGWEvHnXBqnueR3ISEMWpOnm40jH2tM2HnnL/0F4=
+GARAGE_METRICS_TOKEN=BCAdFjoa9G0KJR0WXnHHm7fs1ZAbfpI8iIZ+Z/a2NgI=
+```
+
+```bash
+# Secure the secrets file
+chmod 600 /etc/garage/secrets.env
+chown garage:garage /etc/garage/secrets.env
+```
+
+### Development Quick Start
+
+For local testing with sensible defaults:
+
+```bash
+#!/bin/bash
+# dev-start.sh
+
+export GARAGE_DEFAULT_ACCESS_KEY="GK1234567890ABCDEFGH"
+export GARAGE_DEFAULT_SECRET_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+export GARAGE_DEFAULT_BUCKET="test-bucket"
+
+garage -c /etc/garage/garage.toml server \
+  --single-node \
+  --default-access-key \
+  --default-bucket
+```
+
+## Precedence Order
+
+When the same setting is configured in multiple places, Garage uses this precedence order (highest to lowest):
+
+1. **Environment variables** (e.g., `GARAGE_RPC_SECRET`)
+2. **Environment variable file paths** (e.g., `GARAGE_RPC_SECRET_FILE`)
+3. **Configuration file paths** (e.g., `rpc_secret_file`)
+4. **Configuration file values** (e.g., `rpc_secret`)
+5. **Default values**
+
+### Example Precedence
+
+Given this configuration:
+
+```toml
+# garage.toml
+rpc_secret = "config-file-secret"
+rpc_secret_file = "/etc/garage/rpc-secret.txt"
+```
+
+And these environment variables:
+```bash
+export GARAGE_RPC_SECRET_FILE="/run/secrets/rpc"
+export GARAGE_RPC_SECRET="env-secret"
+```
+
+**Result:** Garage uses `"env-secret"` from `GARAGE_RPC_SECRET` (highest precedence).
+
+## Security Best Practices
+
+<Tip>
+  **Always use file-based secrets in production**
+  
+  Use `*_FILE` environment variables or configuration file `*_file` options instead of plain text secrets in environment variables or config files.
+</Tip>
+
+<Warning>
+  **Protect your secrets**
+  
+  - Never commit secrets to version control
+  - Use secret management systems (Kubernetes Secrets, Docker Secrets, Vault, etc.)
+  - Set restrictive file permissions (600) on secret files
+  - Rotate secrets regularly
+  - Use different secrets for each environment (dev, staging, production)
+</Warning>
+
+### Secret File Permissions
+
+Garage checks that secret files are not world-readable. If checks fail incorrectly (e.g., with POSIX ACLs), use:
+
+```bash
+export GARAGE_ALLOW_WORLD_READABLE_SECRETS=true
+```
+
+Or in the configuration file:
+```toml
+allow_world_readable_secrets = true
+```
+
+## Related Resources
+
+- [Configuration File Format](/cli/configuration) - Complete configuration reference
+- [Security Best Practices](/operations/security) - Security hardening guide
+- [Docker Deployment](/installation/docker) - Container deployment examples

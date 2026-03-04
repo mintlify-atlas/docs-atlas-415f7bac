@@ -1,0 +1,153 @@
+---
+title: API Overview
+description: Introduction to Garage APIs - S3-compatible object storage and Administration API
+---
+
+Garage provides two main APIs for interacting with the system:
+
+## S3 API
+
+Garage implements the Amazon S3 API, making it compatible with most S3 clients and tools. The S3 API allows you to:
+
+- Store and retrieve objects (files)
+- Manage buckets
+- Configure bucket websites
+- Perform multipart uploads for large files
+- Use presigned URLs for temporary access
+
+### Key Features
+
+**Authentication**
+- Supports AWS Signature Version 4
+- Does not support deprecated Signature Version 2
+
+**URL Styles**
+- Path-style URLs: `https://host.tld/bucket/key`
+- Virtual host-style URLs: `https://bucket.host.tld/key`
+
+**Encryption**
+- SSE-C (Server-Side Encryption with Customer-Provided Keys)
+- Client-side encryption recommended for additional security
+
+**Special Features**
+- Presigned URLs for temporary access
+- Multipart uploads for large files
+- Static website hosting
+- CORS (Cross-Origin Resource Sharing)
+- Lifecycle policies for object expiration
+
+### What's Not Supported
+
+Garage does not currently support:
+- Bucket versioning
+- AWS-style ACLs and bucket policies (Garage has its own permission system)
+- Object tagging
+- Replication
+- Object locking
+- Server-side bucket encryption configuration
+
+For a detailed compatibility matrix, see [S3 API Compatibility](/api/s3-compatibility).
+
+## Administration API
+
+The Garage Administration API provides programmatic access to cluster management and configuration. It's accessible through a dedicated server endpoint.
+
+### Current Version
+
+The current version is **v2**. No breaking changes will be published outside of a major release.
+
+**Version History:**
+- Before Garage v0.7.2 - no admin API
+- Garage v0.7.2 - admin API v0
+- Garage v0.9.0 - admin API v1 (deprecated v0)
+- Garage v2.0.0 - admin API v2 (deprecated v1)
+
+### Access Control
+
+#### API Tokens
+
+Administration API tokens are used as HTTP bearer tokens:
+
+```bash
+Authorization: Bearer <token>
+```
+
+#### User-Defined Tokens
+
+Cluster administrators can create scoped tokens with limited permissions and expiration dates:
+
+```bash
+garage admin-token create --expires-in 30d \
+  --scope ListBuckets,CreateBucket,CreateKey \
+  my-token
+```
+
+### Admin API Endpoints
+
+The Administration API allows you to:
+
+- Manage cluster nodes and layout
+- Create and manage buckets
+- Create and manage access keys
+- Configure bucket permissions
+- Monitor cluster health and metrics
+- Manage admin tokens
+
+### Using the Admin API
+
+#### Via HTTP
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  http://localhost:3903/v2/GetClusterStatus | jq
+```
+
+#### Via CLI (Garage v2.0.0+)
+
+The `garage` CLI can proxy API calls through RPC without authentication:
+
+```bash
+garage json-api GetClusterHealth
+```
+
+With JSON body:
+
+```bash
+garage json-api CreateBucket '{"globalAlias": "my-bucket"}'
+```
+
+### Special Endpoints
+
+**Metrics** - `GET /metrics`
+- Returns Prometheus-formatted metrics
+- Can be accessed with `metrics_token`
+
+**Health Check** - `GET /health`
+- Returns `200 OK` if cluster has quorum
+- Returns `503 Service Unavailable` otherwise
+
+**TLS Domain Check** - `GET /check`
+- Used by reverse proxies (like Caddy) for on-demand TLS
+- Validates if a domain is authorized for certificate issuance
+
+## API Documentation Resources
+
+**Admin API OpenAPI Specifications:**
+- [Admin API v2 (HTML)](https://garagehq.deuxfleurs.fr/api/garage-admin-v2.html) - [OpenAPI JSON](https://garagehq.deuxfleurs.fr/api/garage-admin-v2.json)
+- [Admin API v1 (deprecated)](https://garagehq.deuxfleurs.fr/api/garage-admin-v1.html)
+- [Admin API v0 (deprecated)](https://garagehq.deuxfleurs.fr/api/garage-admin-v0.html)
+
+**S3 API Compatibility:**
+- See [S3 Compatibility Matrix](/api/s3-compatibility) for detailed endpoint support
+
+## Getting Started
+
+To start using the Garage APIs:
+
+1. Configure your Garage instance with appropriate API endpoints
+2. Create access keys for S3 API access
+3. Set up admin tokens for Administration API access
+4. Use standard S3 clients (AWS CLI, SDK, etc.) for object storage
+5. Use the Admin API or CLI for cluster management
+
+For more information on configuration, see the [Configuration Reference](/cli/configuration).

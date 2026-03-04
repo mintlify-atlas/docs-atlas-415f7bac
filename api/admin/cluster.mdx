@@ -1,0 +1,427 @@
+---
+title: Cluster Management
+description: Endpoints for managing Garage cluster status, health, and layout
+---
+
+Cluster management endpoints allow you to monitor and configure your Garage cluster's status, health, and layout configuration.
+
+## Get Cluster Status
+
+Returns the cluster's current status, including node information and layout details.
+
+```bash
+GET /v2/GetClusterStatus
+```
+
+### Response
+
+<ResponseField name="layoutVersion" type="integer" required>
+  Current version number of the cluster layout
+</ResponseField>
+
+<ResponseField name="nodes" type="array" required>
+  List of nodes in the cluster
+  
+  <Expandable title="Node Object">
+    <ResponseField name="id" type="string">
+      Node ID (hex-encoded)
+    </ResponseField>
+    
+    <ResponseField name="garageVersion" type="string">
+      Version of Garage running on this node
+    </ResponseField>
+    
+    <ResponseField name="addr" type="string">
+      Network address of the node
+    </ResponseField>
+    
+    <ResponseField name="hostname" type="string">
+      Hostname of the node
+    </ResponseField>
+    
+    <ResponseField name="isUp" type="boolean">
+      Whether the node is currently connected
+    </ResponseField>
+    
+    <ResponseField name="lastSeenSecsAgo" type="integer">
+      Seconds since last communication with this node
+    </ResponseField>
+    
+    <ResponseField name="role" type="object">
+      Node's role in the cluster layout
+      
+      <Expandable title="Role Properties">
+        <ResponseField name="zone" type="string">
+          Availability zone
+        </ResponseField>
+        
+        <ResponseField name="capacity" type="integer">
+          Storage capacity in bytes
+        </ResponseField>
+        
+        <ResponseField name="tags" type="array">
+          Node tags
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="dataPartition" type="object">
+      Data partition disk space information
+      
+      <Expandable title="Properties">
+        <ResponseField name="available" type="integer">
+          Available bytes
+        </ResponseField>
+        
+        <ResponseField name="total" type="integer">
+          Total bytes
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="metadataPartition" type="object">
+      Metadata partition disk space information
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  http://localhost:3903/v2/GetClusterStatus | jq
+```
+
+```json
+{
+  "layoutVersion": 12,
+  "nodes": [
+    {
+      "id": "62b218d848e86a84f0ec5cae0458a974d9993d87b90c2c28",
+      "garageVersion": "v2.0.0",
+      "addr": "10.0.0.11:3901",
+      "hostname": "node1.garage.local",
+      "isUp": true,
+      "lastSeenSecsAgo": 2,
+      "role": {
+        "zone": "dc1",
+        "capacity": 100000000000,
+        "tags": ["fast"]
+      },
+      "dataPartition": {
+        "available": 75000000000,
+        "total": 100000000000
+      }
+    }
+  ]
+}
+```
+
+## Get Cluster Health
+
+Returns the cluster's health status with partition and node connectivity information.
+
+```bash
+GET /v2/GetClusterHealth
+```
+
+### Response
+
+<ResponseField name="status" type="string" required>
+  Overall cluster status: `healthy`, `degraded`, or `unavailable`
+  
+  - `healthy`: Connected to all storage nodes
+  - `degraded`: Not connected to all nodes, but write quorum available
+  - `unavailable`: Write quorum not available for some partitions
+</ResponseField>
+
+<ResponseField name="knownNodes" type="integer" required>
+  Number of nodes this node has connected to since daemon start
+</ResponseField>
+
+<ResponseField name="connectedNodes" type="integer" required>
+  Number of nodes currently connected
+</ResponseField>
+
+<ResponseField name="storageNodes" type="integer" required>
+  Number of storage nodes registered in cluster layout
+</ResponseField>
+
+<ResponseField name="storageNodesUp" type="integer" required>
+  Number of storage nodes currently connected
+</ResponseField>
+
+<ResponseField name="partitions" type="integer" required>
+  Total number of partitions (currently always 256)
+</ResponseField>
+
+<ResponseField name="partitionsQuorum" type="integer" required>
+  Number of partitions with write quorum available
+</ResponseField>
+
+<ResponseField name="partitionsAllOk" type="integer" required>
+  Number of partitions with all storage nodes connected
+</ResponseField>
+
+### Example
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  http://localhost:3903/v2/GetClusterHealth | jq
+```
+
+```json
+{
+  "status": "healthy",
+  "knownNodes": 3,
+  "connectedNodes": 3,
+  "storageNodes": 3,
+  "storageNodesUp": 3,
+  "partitions": 256,
+  "partitionsQuorum": 256,
+  "partitionsAllOk": 256
+}
+```
+
+## Get Cluster Statistics
+
+Returns global cluster statistics including storage usage and capacity.
+
+```bash
+GET /v2/GetClusterStatistics
+```
+
+### Response
+
+<ResponseField name="freeform" type="string" required>
+  Plain-text formatted statistics. Do not parse this field as its format is not stable.
+</ResponseField>
+
+### Example
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  http://localhost:3903/v2/GetClusterStatistics
+```
+
+## Get Cluster Layout
+
+Returns the cluster's current layout configuration, including staged changes.
+
+```bash
+GET /v2/GetClusterLayout
+```
+
+### Response
+
+<ResponseField name="version" type="integer" required>
+  Current version number of the cluster layout
+</ResponseField>
+
+<ResponseField name="roles" type="array" required>
+  List of nodes with roles in the current layout
+  
+  <Expandable title="Role Object">
+    <ResponseField name="id" type="string">
+      Node ID (hex-encoded)
+    </ResponseField>
+    
+    <ResponseField name="zone" type="string">
+      Availability zone
+    </ResponseField>
+    
+    <ResponseField name="capacity" type="integer">
+      Storage capacity in bytes (null for gateway nodes)
+    </ResponseField>
+    
+    <ResponseField name="tags" type="array">
+      Node tags
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="stagedRoleChanges" type="array" required>
+  List of pending role changes that will be applied on next layout update
+</ResponseField>
+
+<ResponseField name="partitionSize" type="integer" required>
+  Size of one partition in bytes
+</ResponseField>
+
+<ResponseField name="parameters" type="object" required>
+  Layout computation parameters
+</ResponseField>
+
+### Example
+
+```bash
+curl -H 'Authorization: Bearer s3cr3t' \
+  http://localhost:3903/v2/GetClusterLayout | jq
+```
+
+## Update Cluster Layout
+
+Send modifications to the cluster layout. Changes are staged and must be applied with `ApplyClusterLayout`.
+
+```bash
+POST /v2/UpdateClusterLayout
+```
+
+### Request Body
+
+<ParamField body="nodeId" type="string" required>
+  ID of the node to configure
+</ParamField>
+
+<ParamField body="zone" type="string">
+  Availability zone for the node
+</ParamField>
+
+<ParamField body="capacity" type="integer">
+  Storage capacity in bytes. Set to `null` to configure as gateway node.
+  
+  Example: `100000000000` for 100GB (SI units: 1kB = 1000 bytes)
+</ParamField>
+
+<ParamField body="tags" type="array">
+  Tags for the node
+</ParamField>
+
+<ParamField body="remove" type="boolean">
+  Set to `true` to remove the node from the layout
+</ParamField>
+
+### Example: Add Storage Node
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "62b218d848e86a84f0ec5cae0458a974d9993d87b90c2c28": {
+      "zone": "dc1",
+      "capacity": 100000000000,
+      "tags": ["fast", "ssd"]
+    }
+  }' \
+  http://localhost:3903/v2/UpdateClusterLayout
+```
+
+### Example: Configure Gateway Node
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "62b218d848e86a84f0ec5cae0458a974d9993d87b90c2c28": {
+      "zone": "dc1",
+      "capacity": null,
+      "tags": ["gateway"]
+    }
+  }' \
+  http://localhost:3903/v2/UpdateClusterLayout
+```
+
+## Apply Cluster Layout
+
+Applies staged layout changes to the cluster.
+
+```bash
+POST /v2/ApplyClusterLayout
+```
+
+### Request Body
+
+<ParamField body="version" type="integer" required>
+  Expected new version number (safety measure to prevent concurrent modifications)
+</ParamField>
+
+### Response
+
+<ResponseField name="layout" type="object" required>
+  The newly applied cluster layout
+</ResponseField>
+
+<ResponseField name="message" type="array" required>
+  Plain-text information about the layout computation (do not parse)
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '{"version": 13}' \
+  http://localhost:3903/v2/ApplyClusterLayout
+```
+
+## Revert Cluster Layout
+
+Clears all staged layout changes without applying them.
+
+```bash
+POST /v2/RevertClusterLayout
+```
+
+### Example
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  http://localhost:3903/v2/RevertClusterLayout
+```
+
+## Connect Cluster Nodes
+
+Instructs this node to connect to other Garage nodes.
+
+```bash
+POST /v2/ConnectClusterNodes
+```
+
+### Request Body
+
+Array of node addresses in format `<node_id>@<address>:<port>`
+
+<ParamField body="nodes" type="array" required>
+  List of node connection strings
+</ParamField>
+
+### Response
+
+<ResponseField name="results" type="array" required>
+  Connection results for each node
+  
+  <Expandable title="Result Object">
+    <ResponseField name="success" type="boolean">
+      Whether connection succeeded
+    </ResponseField>
+    
+    <ResponseField name="error" type="string">
+      Error message if connection failed
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST -H 'Authorization: Bearer s3cr3t' \
+  -H 'Content-Type: application/json' \
+  -d '[
+    "62b218d848e86a84f0ec5cae0458a974d9993d87b90c2c28@10.0.0.11:3901",
+    "a11c7cf18af297379c0c6f5d7b8f8d2e9f3e1b4c5d6a7b8c@10.0.0.12:3901"
+  ]' \
+  http://localhost:3903/v2/ConnectClusterNodes
+```
+
+```json
+[
+  {
+    "success": true,
+    "error": null
+  },
+  {
+    "success": false,
+    "error": "Connection timeout"
+  }
+]
+```

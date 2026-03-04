@@ -1,0 +1,529 @@
+---
+title: Multipart Uploads
+description: Upload large objects to Garage using the S3 multipart upload API
+---
+
+Multipart uploads allow you to upload large objects in parts, with better reliability and performance compared to single-request uploads.
+
+## Overview
+
+The multipart upload process consists of three steps:
+
+1. **Initiate** - Create a new multipart upload and receive an upload ID
+2. **Upload Parts** - Upload object parts (1-10,000 parts, each 5MB-5GB)
+3. **Complete** - Combine all parts into a single object
+
+<Info>
+  Use multipart uploads for objects larger than 100MB. Parts can be uploaded in parallel for better performance.
+</Info>
+
+## CreateMultipartUpload
+
+Initiates a multipart upload and returns an upload ID.
+
+```http
+POST /{bucket}/{key}?uploads HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Request Headers
+
+Accepts the same metadata headers as [PutObject](/api/s3/object-operations#putobject):
+
+<ParamField header="Content-Type" type="string">
+  MIME type for the final object
+</ParamField>
+
+<ParamField header="x-amz-meta-*" type="string">
+  Custom metadata for the object
+</ParamField>
+
+<ParamField header="Cache-Control" type="string">
+  Cache control directives
+</ParamField>
+
+### Checksums
+
+<ParamField header="x-amz-checksum-algorithm" type="string">
+  Checksum algorithm to use: `CRC32`, `CRC32C`, `CRC64NVME`, `SHA1`, or `SHA256`
+</ParamField>
+
+### Example
+
+```bash AWS CLI
+aws s3api create-multipart-upload --bucket my-bucket --key large-file.bin \
+  --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl -X POST "https://s3.garage.example.com/my-bucket/large-file.bin?uploads" \
+  -H "Authorization: AWS4-HMAC-SHA256 ..." \
+  -H "Content-Type: application/octet-stream"
+```
+
+### Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<InitiateMultipartUploadResult>
+  <Bucket>my-bucket</Bucket>
+  <Key>large-file.bin</Key>
+  <UploadId>1a2b3c4d5e6f7g8h9i0j</UploadId>
+</InitiateMultipartUploadResult>
+```
+
+<ParamField path="UploadId" type="string">
+  Hex-encoded upload identifier (use this in subsequent requests)
+</ParamField>
+
+## UploadPart
+
+Uploads a part of the object.
+
+```http
+PUT /{bucket}/{key}?partNumber={part-number}&uploadId={upload-id} HTTP/1.1
+Host: s3.garage.example.com
+Content-Length: {part-size}
+```
+
+### Query Parameters
+
+<ParamField query="partNumber" type="integer" required>
+  Part number (1-10,000)
+</ParamField>
+
+<ParamField query="uploadId" type="string" required>
+  Upload ID from CreateMultipartUpload
+</ParamField>
+
+### Request Headers
+
+<ParamField header="Content-Length" type="integer" required>
+  Size of this part in bytes (minimum 5MB except for the last part)
+</ParamField>
+
+<ParamField header="Content-MD5" type="string">
+  Base64-encoded MD5 hash of the part data
+</ParamField>
+
+### Checksums
+
+If a checksum algorithm was specified in CreateMultipartUpload, include the part checksum:
+
+<ParamField header="x-amz-checksum-crc32" type="string">
+  Base64-encoded CRC32 checksum of this part
+</ParamField>
+
+<ParamField header="x-amz-checksum-crc32c" type="string">
+  Base64-encoded CRC32C checksum of this part
+</ParamField>
+
+<ParamField header="x-amz-checksum-crc64nvme" type="string">
+  Base64-encoded CRC64NVME checksum of this part
+</ParamField>
+
+<ParamField header="x-amz-checksum-sha1" type="string">
+  Base64-encoded SHA1 checksum of this part
+</ParamField>
+
+<ParamField header="x-amz-checksum-sha256" type="string">
+  Base64-encoded SHA256 checksum of this part
+</ParamField>
+
+### Example
+
+```bash AWS CLI
+aws s3api upload-part --bucket my-bucket --key large-file.bin \
+  --part-number 1 --upload-id "1a2b3c4d5e6f7g8h9i0j" \
+  --body part1.bin \
+  --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl -X PUT "https://s3.garage.example.com/my-bucket/large-file.bin?partNumber=1&uploadId=1a2b3c4d5e6f7g8h9i0j" \
+  -H "Authorization: AWS4-HMAC-SHA256 ..." \
+  -H "Content-Length: 10485760" \
+  --data-binary @part1.bin
+```
+
+### Response
+
+```http
+HTTP/1.1 200 OK
+ETag: "d41d8cd98f00b204e9800998ecf8427e"
+```
+
+<Info>
+  Save the ETag from each UploadPart response - you'll need them to complete the upload.
+</Info>
+
+## UploadPartCopy
+
+Copies data from an existing object as a part.
+
+```http
+PUT /{bucket}/{key}?partNumber={part-number}&uploadId={upload-id} HTTP/1.1
+Host: s3.garage.example.com
+x-amz-copy-source: /source-bucket/source-key
+```
+
+### Request Headers
+
+<ParamField header="x-amz-copy-source" type="string" required>
+  Source object path: `/bucket/key`
+</ParamField>
+
+<ParamField header="x-amz-copy-source-range" type="string">
+  Byte range to copy from source: `bytes=0-10485759`
+</ParamField>
+
+### Example
+
+```bash AWS CLI
+aws s3api upload-part-copy --bucket my-bucket --key large-file.bin \
+  --part-number 1 --upload-id "1a2b3c4d5e6f7g8h9i0j" \
+  --copy-source "/source-bucket/source-file.bin" \
+  --copy-source-range "bytes=0-10485759" \
+  --endpoint-url https://s3.garage.example.com
+```
+
+## ListParts
+
+Lists the parts that have been uploaded.
+
+```http
+GET /{bucket}/{key}?uploadId={upload-id} HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Query Parameters
+
+<ParamField query="uploadId" type="string" required>
+  Upload ID from CreateMultipartUpload
+</ParamField>
+
+<ParamField query="max-parts" type="integer" default="1000">
+  Maximum number of parts to return (1-1000)
+</ParamField>
+
+<ParamField query="part-number-marker" type="integer">
+  Part number to start listing from
+</ParamField>
+
+### Example
+
+```bash AWS CLI
+aws s3api list-parts --bucket my-bucket --key large-file.bin \
+  --upload-id "1a2b3c4d5e6f7g8h9i0j" \
+  --endpoint-url https://s3.garage.example.com
+```
+
+### Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<ListPartsResult>
+  <Bucket>my-bucket</Bucket>
+  <Key>large-file.bin</Key>
+  <UploadId>1a2b3c4d5e6f7g8h9i0j</UploadId>
+  <PartNumberMarker>0</PartNumberMarker>
+  <NextPartNumberMarker>2</NextPartNumberMarker>
+  <MaxParts>1000</MaxParts>
+  <IsTruncated>false</IsTruncated>
+  <Part>
+    <PartNumber>1</PartNumber>
+    <ETag>"d41d8cd98f00b204e9800998ecf8427e"</ETag>
+    <Size>10485760</Size>
+  </Part>
+  <Part>
+    <PartNumber>2</PartNumber>
+    <ETag>"098f6bcd4621d373cade4e832627b4f6"</ETag>
+    <Size>5242880</Size>
+  </Part>
+</ListPartsResult>
+```
+
+## CompleteMultipartUpload
+
+Completes the multipart upload by assembling previously uploaded parts.
+
+```http
+POST /{bucket}/{key}?uploadId={upload-id} HTTP/1.1
+Host: s3.garage.example.com
+Content-Type: application/xml
+```
+
+### Request Body
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUpload>
+  <Part>
+    <PartNumber>1</PartNumber>
+    <ETag>"d41d8cd98f00b204e9800998ecf8427e"</ETag>
+  </Part>
+  <Part>
+    <PartNumber>2</PartNumber>
+    <ETag>"098f6bcd4621d373cade4e832627b4f6"</ETag>
+  </Part>
+</CompleteMultipartUpload>
+```
+
+<Info>
+  Part numbers must be in ascending order, but don't need to be sequential (e.g., 1, 3, 5 is valid).
+</Info>
+
+### Request Headers
+
+<ParamField header="x-amz-checksum-crc32" type="string">
+  Expected CRC32 checksum of the complete object (composite checksum)
+</ParamField>
+
+<ParamField header="x-amz-checksum-crc32c" type="string">
+  Expected CRC32C checksum of the complete object
+</ParamField>
+
+<ParamField header="x-amz-checksum-sha1" type="string">
+  Expected SHA1 checksum of the complete object
+</ParamField>
+
+<ParamField header="x-amz-checksum-sha256" type="string">
+  Expected SHA256 checksum of the complete object
+</ParamField>
+
+### Example
+
+```bash AWS CLI
+aws s3api complete-multipart-upload --bucket my-bucket --key large-file.bin \
+  --upload-id "1a2b3c4d5e6f7g8h9i0j" \
+  --multipart-upload "Parts=[{ETag='d41d8cd98f00b204e9800998ecf8427e',PartNumber=1},{ETag='098f6bcd4621d373cade4e832627b4f6',PartNumber=2}]" \
+  --endpoint-url https://s3.garage.example.com
+```
+
+### Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUploadResult>
+  <Location>https://my-bucket.s3.garage.example.com/large-file.bin</Location>
+  <Bucket>my-bucket</Bucket>
+  <Key>large-file.bin</Key>
+  <ETag>&quot;abc123def456-2&quot;</ETag>
+</CompleteMultipartUploadResult>
+```
+
+<Note>
+  The ETag for multipart uploads has the format `{md5}-{part-count}`, where the MD5 is calculated from the concatenated ETags of all parts.
+</Note>
+
+## AbortMultipartUpload
+
+Aborts a multipart upload and frees storage used by uploaded parts.
+
+```http
+DELETE /{bucket}/{key}?uploadId={upload-id} HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Example
+
+```bash AWS CLI
+aws s3api abort-multipart-upload --bucket my-bucket --key large-file.bin \
+  --upload-id "1a2b3c4d5e6f7g8h9i0j" \
+  --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl -X DELETE "https://s3.garage.example.com/my-bucket/large-file.bin?uploadId=1a2b3c4d5e6f7g8h9i0j" \
+  -H "Authorization: AWS4-HMAC-SHA256 ..."
+```
+
+### Response
+
+```http
+HTTP/1.1 204 No Content
+```
+
+## ListMultipartUploads
+
+Lists in-progress multipart uploads for a bucket.
+
+```http
+GET /{bucket}?uploads HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Query Parameters
+
+<ParamField query="delimiter" type="string">
+  Character to group keys
+</ParamField>
+
+<ParamField query="encoding-type" type="string">
+  Encoding for keys in response: `url`
+</ParamField>
+
+<ParamField query="key-marker" type="string">
+  Key to start listing from
+</ParamField>
+
+<ParamField query="max-uploads" type="integer" default="1000">
+  Maximum uploads to return (1-1000)
+</ParamField>
+
+<ParamField query="prefix" type="string">
+  Limit to uploads for keys with this prefix
+</ParamField>
+
+<ParamField query="upload-id-marker" type="string">
+  Upload ID to start from (for pagination)
+</ParamField>
+
+### Example
+
+```bash AWS CLI
+aws s3api list-multipart-uploads --bucket my-bucket \
+  --endpoint-url https://s3.garage.example.com
+```
+
+### Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<ListMultipartUploadsResult>
+  <Bucket>my-bucket</Bucket>
+  <KeyMarker/>
+  <UploadIdMarker/>
+  <MaxUploads>1000</MaxUploads>
+  <IsTruncated>false</IsTruncated>
+  <Upload>
+    <Key>large-file.bin</Key>
+    <UploadId>1a2b3c4d5e6f7g8h9i0j</UploadId>
+    <Initiated>2026-03-04T10:30:00.000Z</Initiated>
+  </Upload>
+</ListMultipartUploadsResult>
+```
+
+## Checksum Types
+
+When using checksums with multipart uploads, Garage supports two checksum types:
+
+### Composite Checksums
+
+Calculated by hashing the concatenation of individual part checksums. Supported for:
+
+- CRC32
+- CRC32C
+- SHA1
+- SHA256
+
+### Full-Object Checksums
+
+Calculated by combining part CRCs using CRC concatenation properties. Supported for:
+
+- CRC32
+- CRC32C  
+- CRC64NVME
+
+Specify the checksum type in the CompleteMultipartUpload request:
+
+```http
+x-amz-checksum-type: COMPOSITE
+```
+
+or
+
+```http
+x-amz-checksum-type: FULL_OBJECT
+```
+
+<Info>
+  See [AWS documentation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity.html) for more details on checksum calculation.
+</Info>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Part Size">
+    - Use parts of at least 10-100 MB for optimal performance
+    - All parts except the last must be at least 5 MB
+    - Maximum part size is 5 GB
+    - Maximum 10,000 parts per upload
+  </Accordion>
+
+  <Accordion title="Parallel Uploads">
+    Upload parts in parallel to maximize throughput:
+    
+    ```bash
+    # Upload 4 parts in parallel
+    for i in {1..4}; do
+      aws s3api upload-part \
+        --bucket my-bucket \
+        --key large-file.bin \
+        --part-number $i \
+        --upload-id "1a2b3c4d5e6f7g8h9i0j" \
+        --body part${i}.bin \
+        --endpoint-url https://s3.garage.example.com &
+    done
+    wait
+    ```
+  </Accordion>
+
+  <Accordion title="Error Handling">
+    - Always call AbortMultipartUpload if an error occurs
+    - Use ListParts to verify uploaded parts before completing
+    - Set up lifecycle rules to automatically abort incomplete uploads after a timeout
+  </Accordion>
+
+  <Accordion title="Checksums">
+    - Use checksums for data integrity verification
+    - Choose CRC variants for better performance
+    - Use SHA variants when cryptographic strength is needed
+  </Accordion>
+</AccordionGroup>
+
+## Complete Example
+
+Here's a complete workflow using the AWS CLI:
+
+```bash
+# 1. Initiate upload
+UPLOAD_ID=$(aws s3api create-multipart-upload \
+  --bucket my-bucket \
+  --key large-file.bin \
+  --endpoint-url https://s3.garage.example.com \
+  --output text --query 'UploadId')
+
+# 2. Upload parts (example: 2 parts)
+ETAG1=$(aws s3api upload-part \
+  --bucket my-bucket \
+  --key large-file.bin \
+  --part-number 1 \
+  --upload-id "$UPLOAD_ID" \
+  --body part1.bin \
+  --endpoint-url https://s3.garage.example.com \
+  --output text --query 'ETag')
+
+ETAG2=$(aws s3api upload-part \
+  --bucket my-bucket \
+  --key large-file.bin \
+  --part-number 2 \
+  --upload-id "$UPLOAD_ID" \
+  --body part2.bin \
+  --endpoint-url https://s3.garage.example.com \
+  --output text --query 'ETag')
+
+# 3. Complete the upload
+aws s3api complete-multipart-upload \
+  --bucket my-bucket \
+  --key large-file.bin \
+  --upload-id "$UPLOAD_ID" \
+  --multipart-upload "Parts=[{ETag=$ETAG1,PartNumber=1},{ETag=$ETAG2,PartNumber=2}]" \
+  --endpoint-url https://s3.garage.example.com
+```
+
+## See Also
+
+- [Object Operations](/api/s3/object-operations)
+- [Bucket Operations](/api/s3/bucket-operations)
+- [S3 Compatibility Reference](/api/s3-compatibility)

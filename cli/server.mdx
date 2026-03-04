@@ -1,0 +1,227 @@
+---
+title: garage server
+description: Run the Garage server
+---
+
+## Description
+
+The `garage server` command starts a Garage node, which will run the distributed object storage server. This is the main daemon process that handles S3 API requests, manages data storage, and participates in the cluster.
+
+## Usage
+
+```bash
+garage server [OPTIONS]
+```
+
+## Options
+
+<ParamField path="--single-node" type="flag">
+  Automatically configure a single-node layout in the cluster.
+  
+  Garage will refuse to run if the cluster already has other nodes. This option is useful for development, testing, or single-node deployments where you don't need a multi-node cluster.
+</ParamField>
+
+<ParamField path="--default-access-key" type="flag">
+  Configure a default S3 API key using environment variables `GARAGE_DEFAULT_ACCESS_KEY` and `GARAGE_DEFAULT_SECRET_KEY`.
+  
+  This option requires `--single-node` to be set. The access key is automatically created and configured with full permissions.
+</ParamField>
+
+<ParamField path="--default-bucket" type="flag">
+  Configure a default bucket using environment variable `GARAGE_DEFAULT_BUCKET`.
+  
+  This option implies `--default-access-key` and requires `--single-node`. The bucket is automatically created and linked to the default access key.
+</ParamField>
+
+## Configuration File
+
+The server requires a configuration file (default: `/etc/garage.toml`) that specifies:
+
+- Node metadata directory
+- Data directory
+- RPC and API bind addresses
+- RPC secret for cluster communication
+- Replication mode
+- And other operational parameters
+
+See the [Configuration Reference](/cli/configuration) for complete details.
+
+## Examples
+
+### Start Server with Default Configuration
+
+```bash
+garage server
+```
+
+This starts Garage using the configuration file at `/etc/garage.toml`.
+
+### Start Server with Custom Configuration
+
+```bash
+garage -c /path/to/config.toml server
+```
+
+### Single-Node Development Setup
+
+```bash
+# Start a single-node cluster with automatic configuration
+garage server --single-node
+```
+
+### Single-Node with Default Credentials
+
+```bash
+# Set default credentials
+export GARAGE_DEFAULT_ACCESS_KEY="GK1234567890abcdef"
+export GARAGE_DEFAULT_SECRET_KEY="your-secret-key-here"
+
+# Start server with automatic key creation
+garage server --single-node --default-access-key
+```
+
+### Complete Single-Node Setup with Bucket
+
+```bash
+# Set credentials and bucket name
+export GARAGE_DEFAULT_ACCESS_KEY="GK1234567890abcdef"
+export GARAGE_DEFAULT_SECRET_KEY="your-secret-key-here"
+export GARAGE_DEFAULT_BUCKET="my-bucket"
+
+# Start server with full automatic setup
+garage server --single-node --default-bucket
+```
+
+This creates:
+1. A single-node cluster layout
+2. An S3 access key with the specified credentials
+3. A bucket named "my-bucket" accessible with those credentials
+
+## Running as a Service
+
+### systemd Service
+
+Create a systemd service file at `/etc/systemd/system/garage.service`:
+
+```ini
+[Unit]
+Description=Garage Distributed Object Storage
+After=network.target
+
+[Service]
+Type=simple
+User=garage
+Group=garage
+ExecStart=/usr/local/bin/garage server
+Restart=on-failure
+RestartSec=5
+Environment="RUST_LOG=garage=info"
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then enable and start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable garage
+sudo systemctl start garage
+sudo systemctl status garage
+```
+
+### Docker
+
+```bash
+docker run -d \
+  --name garage \
+  -v /etc/garage.toml:/etc/garage.toml \
+  -v /var/lib/garage/meta:/var/lib/garage/meta \
+  -v /var/lib/garage/data:/var/lib/garage/data \
+  -p 3900:3900 \
+  -p 3901:3901 \
+  -p 3902:3902 \
+  dxflrs/garage:latest \
+  server
+```
+
+## Environment Variables for Server
+
+- `RUST_LOG` - Control logging verbosity (e.g., `garage=info,netapp=info`)
+- `GARAGE_LOG_TO_SYSLOG` - Log to syslog (set to `1` or `true`)
+- `GARAGE_LOG_TO_JOURNALD` - Log to journald (set to `1` or `true`)
+- `GARAGE_DEFAULT_ACCESS_KEY` - Default access key (with `--default-access-key`)
+- `GARAGE_DEFAULT_SECRET_KEY` - Default secret key (with `--default-access-key`)
+- `GARAGE_DEFAULT_BUCKET` - Default bucket name (with `--default-bucket`)
+
+## Startup Process
+
+When Garage starts:
+
+1. Loads and validates the configuration file
+2. Initializes or loads the node ID (public key)
+3. Opens the metadata database
+4. Initializes data storage directories
+5. Starts the RPC subsystem and connects to other cluster nodes
+6. Starts the S3 API server
+7. Begins background tasks (replication, repair, garbage collection)
+
+## Shutdown
+
+Garage handles graceful shutdown on SIGTERM or SIGINT:
+
+```bash
+# Send SIGTERM to gracefully shut down
+kill -TERM <pid>
+
+# Or use systemctl if running as a service
+systemctl stop garage
+```
+
+During shutdown, Garage:
+- Stops accepting new requests
+- Completes in-flight operations
+- Closes database connections
+- Flushes any pending writes
+
+## Monitoring
+
+Once the server is running, you can monitor it using:
+
+```bash
+# Check cluster status
+garage status
+
+# View node statistics
+garage stats
+
+# Monitor workers
+garage worker list
+```
+
+## Troubleshooting
+
+### Server Won't Start
+
+1. Check configuration file syntax:
+   ```bash
+   garage -c /etc/garage.toml status
+   ```
+
+2. Verify RPC secret is correct
+
+3. Ensure metadata and data directories exist and are writable:
+   ```bash
+   ls -la /var/lib/garage/
+   ```
+
+4. Check if ports are available:
+   ```bash
+   netstat -tulpn | grep garage
+   ```
+
+### Enable Debug Logging
+
+```bash
+RUST_LOG=garage=debug,netapp=debug garage server
+```

@@ -1,0 +1,298 @@
+---
+title: "Single-Node Deployment"
+description: "Deploy Garage as a single-node server for development and testing"
+---
+
+This guide explains how to deploy Garage as a single-node server. This setup is ideal for development, testing, or learning Garage's workflows.
+
+<Warning>
+  Single-node deployments provide no redundancy for your data and should not be used in production environments.
+</Warning>
+
+## Prerequisites
+
+Before starting, ensure you have:
+
+- A server or local machine with sufficient disk space
+- Network access to download the Garage binary
+- Basic knowledge of command line operations
+
+## Installation
+
+### Get the Binary
+
+Download the latest Garage binary from the official release page:
+
+```bash
+wget https://garagehq.deuxfleurs.fr/download/
+```
+
+Place the binary in your `$PATH` (e.g., `/usr/local/bin` or `~/.local/bin`):
+
+```bash
+sudo cp garage /usr/local/bin/
+sudo chmod +x /usr/local/bin/garage
+```
+
+Verify the installation:
+
+```bash
+garage --version
+```
+
+### Alternative: Binary Packages
+
+Check if your distribution provides a binary package for Garage. Many Linux distributions include Garage in their package repositories.
+
+### Alternative: Docker
+
+You can also run Garage using Docker:
+
+```bash
+docker pull dxflrs/garage:v2.2.0
+```
+
+## Configuration
+
+<Steps>
+  <Step title="Generate Configuration File">
+    Create a minimal configuration file with unique secrets:
+
+    ```bash
+    cat > garage.toml <<EOF
+    metadata_dir = "/tmp/meta"
+    data_dir = "/tmp/data"
+    db_engine = "sqlite"
+
+    replication_factor = 1
+
+    rpc_bind_addr = "[::]:3901"
+    rpc_public_addr = "127.0.0.1:3901"
+    rpc_secret = "$(openssl rand -hex 32)"
+
+    [s3_api]
+    s3_region = "garage"
+    api_bind_addr = "[::]:3900"
+    root_domain = ".s3.garage.localhost"
+
+    [s3_web]
+    bind_addr = "[::]:3902"
+    root_domain = ".web.garage.localhost"
+    index = "index.html"
+
+    [admin]
+    api_bind_addr = "[::]:3903"
+    admin_token = "$(openssl rand -base64 32)"
+    metrics_token = "$(openssl rand -base64 32)"
+    EOF
+    ```
+
+    <Note>
+      The configuration above uses `/tmp` directories which are not persistent. For production use, change these to permanent storage locations.
+    </Note>
+  </Step>
+
+  <Step title="Set Configuration Path">
+    By default, Garage looks for its configuration at `/etc/garage.toml`. If you've placed it elsewhere, set the environment variable:
+
+    ```bash
+    export GARAGE_CONFIG_FILE=$(pwd)/garage.toml
+    ```
+  </Step>
+
+  <Step title="Configure Default Access Credentials">
+    Since Garage v2.3.0, you can automatically create a default access key and bucket using environment variables:
+
+    ```bash
+    export GARAGE_DEFAULT_ACCESS_KEY="GK$(openssl rand -hex 16)"
+    export GARAGE_DEFAULT_SECRET_KEY="$(openssl rand -hex 32)"
+    export GARAGE_DEFAULT_BUCKET="default-bucket"
+    ```
+  </Step>
+</Steps>
+
+## Starting Garage
+
+### Using the Binary
+
+Start Garage with automatic single-node configuration:
+
+```bash
+garage server --single-node --default-bucket
+```
+
+The `--single-node` flag automatically configures a single-node cluster without data replication. The `--default-bucket` flag creates a default access key and bucket using the environment variables defined above.
+
+### Using Docker
+
+Alternatively, run Garage in a Docker container:
+
+```bash
+docker run \
+  -d \
+  --name garage-container \
+  -p 3900:3900 -p 3901:3901 -p 3902:3902 -p 3903:3903 \
+  -v $(pwd)/garage.toml:/etc/garage.toml \
+  -e GARAGE_DEFAULT_ACCESS_KEY \
+  -e GARAGE_DEFAULT_SECRET_KEY \
+  -e GARAGE_DEFAULT_BUCKET \
+  dxflrs/garage:v2.2.0 \
+  /garage server --single-node --default-bucket
+```
+
+<Warning>
+  This Docker command does not create persistent volumes. Add volume mounts for your data directories to persist data.
+</Warning>
+
+## Verification
+
+<Steps>
+  <Step title="Check Cluster Status">
+    Verify that Garage is running correctly:
+
+    ```bash
+    garage status
+    ```
+
+    You should see output similar to:
+
+    ```
+    ==== HEALTHY NODES ====
+    ID                Hostname  Address         Tags       Zone  Capacity  DataAvail         Version
+    563e1ac825ee3323  linuxbox  127.0.0.1:3901  [default]  dc1   19.9 GiB  19.5 GiB (97.6%)  v2.3.0
+    ```
+  </Step>
+
+  <Step title="Docker Status Check">
+    If using Docker, use:
+
+    ```bash
+    docker exec garage-container /garage status
+    ```
+  </Step>
+</Steps>
+
+## Manual Configuration (Pre-v2.3.0)
+
+For Garage versions before v2.3.0, automatic configuration is not available. Follow these manual steps:
+
+<Steps>
+  <Step title="Start Garage Server">
+    ```bash
+    garage server
+    ```
+  </Step>
+
+  <Step title="Create Cluster Layout">
+    ```bash
+    garage layout assign -z dc1 -c 1G <node_id>
+    garage layout apply --version 1
+    ```
+
+    Replace `<node_id>` with the identifier from `garage status`.
+  </Step>
+
+  <Step title="Create Bucket and Key">
+    ```bash
+    # Create a bucket
+    garage bucket create my-bucket
+
+    # Create an API key
+    garage key create my-key
+
+    # Grant permissions
+    garage bucket allow --read --write --owner my-bucket --key my-key
+    ```
+  </Step>
+</Steps>
+
+## Testing Your Setup
+
+### Install AWS CLI
+
+Install the AWS CLI to interact with Garage:
+
+```bash
+python -m pip install --user awscli
+```
+
+### Configure AWS CLI
+
+Create a configuration file:
+
+```bash
+cat > ~/.awsrc <<EOF
+export AWS_ENDPOINT_URL='http://localhost:3900'
+export AWS_DEFAULT_REGION='garage'
+export AWS_ACCESS_KEY_ID='$GARAGE_DEFAULT_ACCESS_KEY'
+export AWS_SECRET_ACCESS_KEY='$GARAGE_DEFAULT_SECRET_KEY'
+
+aws --version
+EOF
+```
+
+Load the configuration:
+
+```bash
+source ~/.awsrc
+```
+
+### Test Operations
+
+Try basic S3 operations:
+
+```bash
+# List buckets
+aws s3 ls
+
+# Upload a file
+aws s3 cp /proc/cpuinfo s3://default-bucket/cpuinfo.txt
+
+# Download a file
+aws s3 cp s3://default-bucket/cpuinfo.txt /tmp/cpuinfo.txt
+
+# List bucket contents
+aws s3 ls s3://default-bucket
+```
+
+## Troubleshooting
+
+### Permission Issues
+
+Ensure your configuration file, `metadata_dir`, and `data_dir` are readable and writable by the user running Garage.
+
+### Debugging
+
+Increase log verbosity using the `RUST_LOG` environment variable:
+
+```bash
+# Info level (default)
+RUST_LOG=garage=info garage server
+
+# Debug level
+RUST_LOG=garage=debug garage server
+
+# Trace level (most verbose)
+RUST_LOG=garage=trace garage server
+```
+
+### Configuration Path Issues
+
+If the CLI cannot find your configuration:
+
+```bash
+# Set environment variable
+export GARAGE_CONFIG_FILE=/path/to/garage.toml
+
+# Or use the -c flag
+garage -c /path/to/garage.toml status
+```
+
+## Next Steps
+
+Now that you have a working single-node Garage instance:
+
+- Learn about [multi-node cluster deployment](/deployment/multi-node) for production use
+- Explore [S3 API compatibility](/api/s3-compatibility)
+- Set up [systemd service](/deployment/systemd) for automatic startup
+- Configure [reverse proxy](/advanced/reverse-proxy) for external access

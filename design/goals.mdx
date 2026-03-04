@@ -1,0 +1,92 @@
+---
+title: "Project Goals and Use Cases"
+description: "Understanding Garage's design goals and real-world applications"
+icon: "bullseye"
+---
+
+Garage is a lightweight geo-distributed data store that implements the [Amazon S3](https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html) object storage protocol. It enables you to store large blobs such as pictures, video, images, documents, and more in a redundant multi-node setting.
+
+## Design goals
+
+Garage is an opinionated object storage solution focused on the following desirable properties:
+
+<CardGroup cols={2}>
+  <Card title="Internet enabled" icon="globe">
+    Built for multi-site deployments (datacenters, offices, households) interconnected through regular Internet connections
+  </Card>
+  
+  <Card title="Self-contained & lightweight" icon="feather">
+    Works everywhere and integrates well in existing environments to target [hyperconverged infrastructures](https://en.wikipedia.org/wiki/Hyper-converged_infrastructure)
+  </Card>
+  
+  <Card title="Highly resilient" icon="shield">
+    Resilient to network failures, network latency, disk failures, and sysadmin failures
+  </Card>
+  
+  <Card title="Simple" icon="circle-check">
+    Simple to understand, simple to operate, simple to debug
+  </Card>
+</CardGroup>
+
+## Non-goals
+
+The pursuit of some goals can be detrimental to our core objectives. We've identified the following as **non-goals**:
+
+<Warning>
+  If these points matter to you, Garage may not be the right solution for your needs.
+</Warning>
+
+- **Extreme performance**: High performance constrains design and infrastructure heavily. We seek performance through minimalism only.
+
+- **Feature extensiveness**: We don't plan to add features beyond those provided by the S3 API.
+
+- **Storage optimizations**: Erasure coding and other coding techniques increase the difficulty of data placement and synchronization. We limit ourselves to duplication.
+
+- **POSIX/Filesystem compatibility**: We don't aim for POSIX compatibility or filesystem emulation. In distributed environments, such synchronizations translate to network messages that impose severe deployment constraints.
+
+## Use cases
+
+<Tip>
+  Are you using Garage in your organization? [Open a PR](https://git.deuxfleurs.fr/Deuxfleurs/garage) to add your use case!
+</Tip>
+
+### Deuxfleurs
+
+[Deuxfleurs](https://deuxfleurs.fr) is an experimental non-profit hosting organization that develops Garage. They focus on building highly available infrastructure through redundancy in multiple geographical locations.
+
+**Their Garage deployment:**
+- 9 nodes across 3 physical locations
+- Multi-site cluster configuration
+
+**Use cases:**
+- Hosting main website and member websites
+- [Matrix media backend](https://github.com/matrix-org/synapse-s3-storage-provider)
+- Nix binary cache
+- Personal data and shared documents storage through [Bagage](https://git.deuxfleurs.fr/Deuxfleurs/bagage) (WebDAV-to-S3 and SFTP-to-S3 proxy)
+- Backup target using `rclone` and `restic`
+
+### Triplebit
+
+[Triplebit](https://www.triplebit.org) is a non-profit hosting provider and ISP focused on improving access to privacy-related services.
+
+**Their Garage deployment:**
+- 15 storage nodes across 3 physical locations
+- Multi-site cluster configuration
+
+**Use cases:**
+- Static website hosting ([privacyguides.org](https://www.privacyguides.org/) and others)
+- PowerDNS authoritative zone backend through [Lightning Stream](https://doc.powerdns.com/lightningstream/latest/index.html) and [LMDB](https://doc.powerdns.com/authoritative/backends/lmdb.html)
+- Mastodon media storage for [mstdn.party](https://mstdn.party/) and [mstdn.plus](https://mstdn.plus/)
+- PeerTube storage for [neat.tube](https://neat.tube/)
+- [Matrix media backend](https://github.com/matrix-org/synapse-s3-storage-provider)
+
+## Why Garage?
+
+Garage is designed to fill a specific niche: **geo-distributed object storage for small-to-medium scale deployments**. If you need:
+
+- Storage across multiple physical locations
+- Resilience to Internet connectivity issues
+- Simple deployment without complex dependencies
+- S3-compatible API for broad application support
+
+Then Garage is built for you.

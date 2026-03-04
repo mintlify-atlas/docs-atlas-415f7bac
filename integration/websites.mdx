@@ -1,0 +1,483 @@
+---
+title: 'Static Website Hosting'
+description: 'Deploy and host static websites with Hugo, Jekyll, Publii, and more'
+---
+
+Garage provides excellent support for hosting static websites. Many static site generators have built-in support for S3 deployment, and you can easily configure them to work with Garage.
+
+## How Website Hosting Works
+
+Garage's website serving functionality provides:
+
+- **Static-only hosting**: No support for server-side languages (PHP, Python, etc.)
+- **Configurable index files**: Default is `index.html`, customizable per bucket
+- **Custom error pages**: Configure custom 404 error documents
+- **No directory listing**: For security and privacy
+- **Flexible URL routing**: Support for both subdomain and custom domain access
+
+### URL Patterns
+
+Garage serves websites using two URL patterns:
+
+<Tabs>
+  <Tab title="Subdomain Pattern">
+    If your `root_domain` is `.web.example.com` and your bucket is named `mysite`:
+    ```
+    mysite.web.example.com
+    ```
+    This allows you to dedicate a subdomain to your users.
+  </Tab>
+  <Tab title="Custom Domain">
+    Users can bring their own domain by pointing DNS to your Garage cluster:
+    ```
+    mysite.com
+    ```
+    The bucket name must match the domain name.
+  </Tab>
+</Tabs>
+
+## Supported Static Site Generators
+
+| Generator | Status | Notes |
+|-----------|--------|-------|
+| [Hugo](#hugo) | ✅ | Native S3 deployment support |
+| [Publii](#publii) | ✅ | GUI-based, requires vhost endpoint |
+| [Jekyll](#generic-deployment) | ✅ | Via generic CLI tools |
+| [Zola](#generic-deployment) | ✅ | Via generic CLI tools |
+| [Gatsby](#generic-deployment) | ✅ | Via generic CLI tools |
+| [Pelican](#generic-deployment) | ✅ | Via generic CLI tools |
+
+## Quick Setup
+
+Before deploying any website, configure your bucket for website access:
+
+<Steps>
+  <Step title="Create Bucket">
+    ```bash
+    garage bucket create my-website
+    garage key create website-key
+    garage bucket allow my-website --read --write --key website-key
+    ```
+  </Step>
+  <Step title="Enable Website">
+    ```bash
+    garage bucket website --allow my-website
+    ```
+  </Step>
+  <Step title="Configure DNS">
+    Point your domain to the Garage web endpoint:
+    - A record: Your Garage server IP
+    - CNAME: `my-website.web.garage.example.com`
+  </Step>
+</Steps>
+
+## Hugo
+
+Hugo has built-in support for deploying to S3-compatible storage.
+
+### Configuration
+
+Add to your `config.toml`:
+
+```toml
+[[deployment.targets]]
+URL = "s3://<bucket>?endpoint=<endpoint>&disableSSL=<bool>&s3ForcePathStyle=true&region=garage"
+```
+
+### Example Configuration
+
+<Tabs>
+  <Tab title="HTTP (Local Development)">
+    ```toml
+    [[deployment.targets]]
+    URL = "s3://my-blog?endpoint=localhost:3900&disableSSL=true&s3ForcePathStyle=true&region=garage"
+    ```
+  </Tab>
+  <Tab title="HTTPS (Production)">
+    ```toml
+    [[deployment.targets]]
+    URL = "s3://my-blog?endpoint=garage.example.com:443&disableSSL=false&s3ForcePathStyle=true&region=garage"
+    ```
+  </Tab>
+</Tabs>
+
+### Deployment
+
+<Steps>
+  <Step title="Set Credentials">
+    ```bash
+    export AWS_ACCESS_KEY_ID=GKxxxx
+    export AWS_SECRET_ACCESS_KEY=xxxx
+    ```
+  </Step>
+  <Step title="Build and Deploy">
+    ```bash
+    hugo
+    hugo deploy
+    ```
+  </Step>
+</Steps>
+
+### Advanced Configuration
+
+Hugo deployment supports additional options:
+
+```toml
+[[deployment.targets]]
+name = "production"
+URL = "s3://my-blog?endpoint=garage.example.com&region=garage&s3ForcePathStyle=true"
+
+[[deployment.matchers]]
+# Cache static assets for 1 year
+pattern = "^.+\\.(js|css|svg|ttf|woff|woff2)$"
+cacheControl = "max-age=31536000, no-transform, public"
+gzip = true
+
+[[deployment.matchers]]
+# Set custom cache for images
+pattern = "^.+\\.(png|jpg|jpeg|gif|webp)$"
+cacheControl = "max-age=2592000, public"
+```
+
+<Tip>
+See [Hugo deployment documentation](https://gohugo.io/hosting-and-deployment/hugo-deploy/) for more configuration options.
+</Tip>
+
+## Publii
+
+Publii is a desktop CMS that makes creating static websites easy with its GUI.
+
+### Prerequisites
+
+<Warning>
+Publii requires your Garage instance to be configured with vhost-style bucket access. Ensure this is set up before proceeding.
+</Warning>
+
+### Setup
+
+<Steps>
+  <Step title="Open Server Settings">
+    In Publii, click on the server icon in the left menu.
+  </Step>
+  <Step title="Choose S3 Protocol">
+    Select "S3" as the protocol.
+  </Step>
+  <Step title="Configure S3 Settings">
+    - **Website URL**: Your final website URL (e.g., `http://my-bucket.web.garage.localhost:3902`)
+    - **Use custom S3 provider**: ✅ Tick this option
+    - **S3 Endpoint**: Your Garage endpoint (e.g., `http://s3.garage.localhost:3900`)
+    - **Access Key**: Your access key (e.g., `GKxxxx`)
+    - **Secret Key**: Your secret key
+    - **Bucket**: Your bucket name (e.g., `my-bucket`)
+  </Step>
+  <Step title="Save and Sync">
+    Click "Save settings" then use "Sync your website" to deploy.
+  </Step>
+</Steps>
+
+## Generic Deployment
+
+For static site generators without native S3 support (Jekyll, Zola, Gatsby, Pelican, etc.), use CLI tools to upload your built site.
+
+### Using Minio Client
+
+<Steps>
+  <Step title="Configure mc">
+    ```bash
+    mc alias set garage \
+      http://127.0.0.1:3900 \
+      GKxxxx \
+      your-secret-key \
+      --api S3v4
+    ```
+  </Step>
+  <Step title="Build Your Site">
+    <Tabs>
+      <Tab title="Jekyll">
+        ```bash
+        jekyll build
+        ```
+        Output directory: `_site`
+      </Tab>
+      <Tab title="Zola">
+        ```bash
+        zola build
+        ```
+        Output directory: `public`
+      </Tab>
+      <Tab title="Gatsby">
+        ```bash
+        gatsby build
+        ```
+        Output directory: `public`
+      </Tab>
+      <Tab title="Pelican">
+        ```bash
+        pelican content
+        ```
+        Output directory: `output`
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Deploy to Garage">
+    ```bash
+    mc mirror --overwrite <output-dir> garage/my-website
+    ```
+    
+    Examples:
+    ```bash
+    # Jekyll
+    mc mirror --overwrite _site garage/my-website
+    
+    # Zola/Gatsby
+    mc mirror --overwrite public garage/my-website
+    
+    # Pelican
+    mc mirror --overwrite output garage/my-website
+    ```
+  </Step>
+</Steps>
+
+### Using AWS CLI
+
+Alternatively, use the AWS CLI:
+
+```bash
+aws s3 sync <output-dir> s3://my-website --delete
+```
+
+The `--delete` flag removes files that no longer exist in your local build.
+
+### Using rclone
+
+For more advanced sync options:
+
+```bash
+rclone sync <output-dir> garage:my-website \
+  --progress \
+  --s3-upload-cutoff 0 \
+  --s3-chunk-size 5M
+```
+
+## Advanced Website Configuration
+
+### Custom Index Document
+
+Set a custom index file (default is `index.html`):
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash
+    garage bucket website --allow my-website --index-document home.html
+    ```
+  </Tab>
+  <Tab title="S3 API">
+    ```bash
+    aws s3api put-bucket-website \
+      --bucket my-website \
+      --website-configuration '{
+        "IndexDocument": {"Suffix": "home.html"}
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+### Custom Error Document
+
+Configure a custom 404 page:
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash
+    garage bucket website --allow my-website --error-document error.html
+    ```
+  </Tab>
+  <Tab title="S3 API">
+    ```bash
+    aws s3api put-bucket-website \
+      --bucket my-website \
+      --website-configuration '{
+        "IndexDocument": {"Suffix": "index.html"},
+        "ErrorDocument": {"Key": "error.html"}
+      }'
+    ```
+  </Tab>
+</Tabs>
+
+### Test Locally
+
+You can test website functionality without DNS configuration using `curl`:
+
+```bash
+# Upload test file
+echo "Hello, World!" > /tmp/index.html
+mc cp /tmp/index.html garage/my-website/
+
+# Test with custom Host header
+curl -H 'Host: my-website' http://localhost:3902
+curl -H 'Host: my-website.web.example.com' http://localhost:3902
+```
+
+## Production Setup
+
+### Reverse Proxy Configuration
+
+For production deployments, use a reverse proxy for HTTPS and caching:
+
+<Tabs>
+  <Tab title="Nginx">
+    ```nginx
+    server {
+        listen 443 ssl http2;
+        server_name *.web.example.com;
+        
+        ssl_certificate /path/to/cert.pem;
+        ssl_certificate_key /path/to/key.pem;
+        
+        location / {
+            proxy_pass http://127.0.0.1:3902;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="Caddy">
+    ```caddyfile
+    *.web.example.com {
+        reverse_proxy localhost:3902
+    }
+    ```
+  </Tab>
+  <Tab title="Apache">
+    ```apache
+    <VirtualHost *:443>
+        ServerName web.example.com
+        ServerAlias *.web.example.com
+        
+        SSLEngine on
+        SSLCertificateFile /path/to/cert.pem
+        SSLCertificateKeyFile /path/to/key.pem
+        
+        ProxyPreserveHost On
+        ProxyPass / http://127.0.0.1:3902/
+        ProxyPassReverse / http://127.0.0.1:3902/
+    </VirtualHost>
+    ```
+  </Tab>
+</Tabs>
+
+### Port Configuration
+
+You can configure Garage to listen on port 80 or use iptables:
+
+<Tabs>
+  <Tab title="Direct Port 80">
+    Edit `garage.toml`:
+    ```toml
+    [s3_web]
+    bind_addr = "0.0.0.0:80"
+    root_domain = ".web.example.com"
+    ```
+  </Tab>
+  <Tab title="iptables Redirect">
+    ```bash
+    iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 3902
+    ```
+  </Tab>
+</Tabs>
+
+## Automation and CI/CD
+
+### GitHub Actions
+
+```yaml
+name: Deploy Website
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v2
+        with:
+          hugo-version: 'latest'
+      
+      - name: Build
+        run: hugo
+      
+      - name: Configure S3
+        run: |
+          pip install awscli
+          aws configure set aws_access_key_id ${{ secrets.S3_ACCESS_KEY }}
+          aws configure set aws_secret_access_key ${{ secrets.S3_SECRET_KEY }}
+          aws configure set default.region garage
+      
+      - name: Deploy
+        run: |
+          aws --endpoint-url ${{ secrets.S3_ENDPOINT }} \
+            s3 sync public/ s3://my-website --delete
+```
+
+### GitLab CI
+
+```yaml
+deploy:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl
+    - curl https://dl.min.io/client/mc/release/linux-amd64/mc --output /usr/local/bin/mc
+    - chmod +x /usr/local/bin/mc
+  script:
+    - mc alias set garage $S3_ENDPOINT $S3_ACCESS_KEY $S3_SECRET_KEY
+    - mc mirror --overwrite public/ garage/my-website
+  only:
+    - main
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="403 Forbidden Error">
+    Ensure the bucket is configured for website access:
+    ```bash
+    garage bucket website --allow my-website
+    ```
+  </Accordion>
+  
+  <Accordion title="404 Not Found for Subdirectories">
+    Make sure each subdirectory has an `index.html` file. Garage does not support directory listing.
+  </Accordion>
+  
+  <Accordion title="CSS/JS Not Loading">
+    Check that your HTML uses relative paths or absolute paths starting with `/`.
+  </Accordion>
+  
+  <Accordion title="Website Not Updating">
+    Clear browser cache or use hard refresh (Ctrl+F5). Consider configuring cache headers.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CLI Tools" icon="terminal" href="/integration/cli-tools">
+    Learn about S3 CLI tools for website deployment
+  </Card>
+  <Card title="Application Integrations" icon="apps" href="/integration/applications">
+    Integrate web applications with Garage
+  </Card>
+  <Card title="Reverse Proxy Setup" icon="server" href="/operations/reverse-proxy">
+    Configure HTTPS and caching with reverse proxies
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/operations/monitoring">
+    Monitor your website hosting performance
+  </Card>
+</CardGroup>

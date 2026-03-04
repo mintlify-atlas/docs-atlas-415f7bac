@@ -1,0 +1,570 @@
+---
+title: 'Application Integrations'
+description: 'Integrate popular applications with Garage for scalable object storage'
+---
+
+Garage can serve as the storage backend for many popular web applications. This guide covers tested integrations with various platforms including file sharing, social media, and chat applications.
+
+## Supported Applications
+
+| Application | Status | Notes |
+|-------------|--------|-------|
+| [Nextcloud](#nextcloud) | ✅ | Both Primary Storage and External Storage |
+| [Mastodon](#mastodon) | ✅ | Natively supported |
+| [Peertube](#peertube) | ✅ | Requires website endpoint |
+| [Matrix](#matrix) | ✅ | Via `synapse-s3-storage-provider` |
+| [Gitea](#gitea) | ✅ | LFS, avatars, and attachments |
+| [Pleroma](#pleroma) | ✅ | Natively supported |
+| [Lemmy](#lemmy) | ✅ | Via pict-rs |
+| [ejabberd](#ejabberd) | ✅ | Via `mod_s3_upload` |
+| [Ente](#ente) | ✅ | Photo storage alternative |
+| Pixelfed | ❓ | Natively supported, not yet tested |
+| Funkwhale | ❓ | Not yet tested |
+| Misskey | ❓ | Not yet tested |
+
+## Nextcloud
+
+Nextcloud is a popular file synchronization and sharing platform. Garage can be configured as either Primary Storage (all data on S3) or External Storage (selective data on S3).
+
+### Prerequisites
+
+First, create a key and bucket:
+
+```bash
+garage key create nextcloud-key
+garage bucket create nextcloud
+garage bucket allow nextcloud --read --write --key nextcloud-key
+```
+
+Note the Key ID and Secret Key for later use.
+
+### Primary Storage
+
+Primary storage stores all Nextcloud data on S3 in an opaque manner, providing the best performance.
+
+Edit your Nextcloud configuration file (typically `/var/www/nextcloud/config/config.php`):
+
+```php
+<?php
+$CONFIG = array(
+  /* your existing configuration */
+  'objectstore' => [
+    'class' => '\\OC\\Files\\ObjectStore\\S3',
+    'arguments' => [
+      'bucket' => 'nextcloud',
+      'autocreate' => false,  // Garage does not support autocreate
+      'key'    => 'GKxxxx',   // Your Key ID
+      'secret' => 'xxxx',     // Your Secret Key
+      'hostname' => '127.0.0.1',
+      'port' => 3900,
+      'use_ssl' => false,
+      'region' => 'garage',
+      'use_path_style' => true  // Required for Garage
+    ],
+  ],
+);
+```
+
+### SSE-C Encryption (Garage v1.0+)
+
+For enhanced security, enable server-side encryption with customer keys:
+
+<Steps>
+  <Step title="Configure SSL">
+    Ensure Garage is accessible via SSL with a valid public certificate.
+  </Step>
+  <Step title="Generate Encryption Key">
+    ```bash
+    openssl rand -base64 32
+    ```
+    Keep this key **secret**!
+  </Step>
+  <Step title="Update Configuration">
+    Add the encryption key to your `config.php`:
+    ```php
+    'objectstore' => [
+      'class' => '\\OC\\Files\\ObjectStore\\S3',
+      'arguments' => [
+        // ... other settings ...
+        'sse_c_key' => 'your-generated-key-here',
+      ],
+    ],
+    ```
+  </Step>
+</Steps>
+
+### External Storage
+
+<Tabs>
+  <Tab title="GUI Configuration">
+    1. Activate "External storage support" from **Applications** page
+    2. Go to **Settings** → **External Storage**
+    3. Add new storage with these settings:
+       - **Folder name**: Choose a name (e.g., "shared")
+       - **Storage type**: Amazon S3
+       - **Authentication**: Access Key
+       - **Bucket**: Your bucket name
+       - **Host**: Your Garage endpoint
+       - **Port**: Your Garage port (e.g., 3900)
+       - **Region**: `garage` (or your configured region)
+       - Enable **SSL** if using HTTPS
+       - Enable **Path access**
+       - Leave **Legacy authentication (v2)** unchecked
+       - Enter your **Key ID** and **Secret Key**
+    4. Click the checkmark to save
+  </Tab>
+  <Tab title="CLI Configuration">
+    ```bash
+    # Install external storage app
+    php occ app:install files_external
+
+    # Create mount point
+    php occ files_external:create \
+      -c bucket=nextcloud \
+      -c hostname=127.0.0.1 \
+      -c port=3900 \
+      -c region=garage \
+      -c use_ssl=false \
+      -c use_path_style=true \
+      -c legacy_auth=false \
+      -c key=GKxxxx \
+      -c secret=xxxx \
+      shared amazons3 amazons3::accesskey
+    ```
+  </Tab>
+</Tabs>
+
+## Mastodon
+
+Mastodon natively supports S3 for media storage with direct serving from Garage.
+
+### Performance Considerations
+
+<Warning>
+Mastodon stores many small objects (average 50-150 KB). For optimal performance:
+- Use Garage v0.8.0+ with LMDB database engine
+- Store the Garage database on SSD storage
+</Warning>
+
+### Setup
+
+<Steps>
+  <Step title="Create Bucket">
+    ```bash
+    garage key create mastodon-key
+    garage bucket create mastodon-data
+    garage bucket allow mastodon-data --read --write --key mastodon-key
+    ```
+  </Step>
+  <Step title="Configure Website Access">
+    ```bash
+    garage bucket alias mastodon-data my-social-media.mydomain.tld
+    garage bucket website --allow mastodon-data
+    ```
+  </Step>
+  <Step title="Setup Reverse Proxy">
+    Configure a reverse proxy to serve media files over HTTPS.
+  </Step>
+</Steps>
+
+### Clean Up Before Migration
+
+Reduce migration time by removing old media:
+
+```bash
+RAILS_ENV=production bin/tootctl media remove --days 3
+RAILS_ENV=production bin/tootctl media remove --days 15 --prune-profiles
+RAILS_ENV=production bin/tootctl media remove-orphans
+RAILS_ENV=production bin/tootctl preview_cards remove --days 15
+```
+
+### Migrate Data
+
+Use the Minio client for efficient migration:
+
+```bash
+mc mirror ./public/system/ garage/mastodon-data
+```
+
+### Configure Mastodon
+
+Add to your `.env.production`:
+
+```bash
+S3_ENABLED=true
+S3_ENDPOINT=http://my-garage-instance.mydomain.tld:3900
+S3_REGION=garage
+S3_BUCKET=mastodon-data
+AWS_ACCESS_KEY_ID=GKxxxx
+AWS_SECRET_ACCESS_KEY=xxxx
+S3_ALIAS_HOST=my-social-media.mydomain.tld
+```
+
+### Final Sync
+
+After Mastodon is using Garage, run a final sync:
+
+```bash
+mc mirror --newer-than "3h" ./public/system/ garage/mastodon-data
+```
+
+## Peertube
+
+Peertube offloads video serving directly to Garage endpoints.
+
+### Create Resources
+
+```bash
+garage key create peertube-key
+garage bucket create peertube-videos
+garage bucket create peertube-playlists
+
+garage bucket allow peertube-videos --read --write --owner --key peertube-key
+garage bucket allow peertube-playlists --read --write --owner --key peertube-key
+
+garage bucket website --allow peertube-videos
+garage bucket website --allow peertube-playlists
+```
+
+### Configure CORS
+
+```bash
+export CORS='{"CORSRules":[{"AllowedHeaders":["*"],"AllowedMethods":["GET"],"AllowedOrigins":["*"]}]}'
+aws --endpoint http://s3.garage.localhost s3api put-bucket-cors --bucket peertube-videos --cors-configuration $CORS
+aws --endpoint http://s3.garage.localhost s3api put-bucket-cors --bucket peertube-playlists --cors-configuration $CORS
+```
+
+### Configure Peertube
+
+Edit `config/production.yaml`:
+
+```yaml
+object_storage:
+  enabled: true
+  endpoint: 'http://localhost:3900'
+  region: 'garage'
+  
+  credentials:
+    access_key_id: 'GKxxxx'
+    secret_access_key: 'xxxx'
+  
+  max_upload_part: 2GB
+  
+  proxy:
+    proxify_private_files: false
+  
+  streaming_playlists:
+    bucket_name: 'peertube-playlists'
+    prefix: ''
+    base_url: 'http://peertube-playlists.web.garage.localhost'
+  
+  videos:
+    bucket_name: 'peertube-videos'
+    prefix: ''
+    base_url: 'http://peertube-videos.web.garage.localhost'
+```
+
+<Note>
+Starting from Peertube v5.0, per-object ACL features are not supported by Garage, which may impact private video security.
+</Note>
+
+## Matrix
+
+Matrix servers can use Garage for media storage.
+
+### Synapse with s3-storage-provider
+
+Install the module:
+
+```bash
+pip3 install --user git+https://github.com/matrix-org/synapse-s3-storage-provider.git
+```
+
+Create bucket and key:
+
+```bash
+garage key create matrix-key
+garage bucket create matrix
+garage bucket allow matrix --read --write --key matrix-key
+```
+
+Edit `/etc/matrix-synapse/homeserver.yaml`:
+
+```yaml
+media_storage_providers:
+- module: s3_storage_provider.S3StorageProviderBackend
+  store_local: True
+  store_remote: True
+  store_synchronous: True
+  config:
+    bucket: matrix
+    region_name: garage
+    endpoint_url: http://localhost:3900
+    access_key_id: "GKxxxx"
+    secret_access_key: "xxxx"
+```
+
+### Cache Garbage Collection
+
+Create a script to clean up local cache (`~/.local/bin/matrix-cache-gc`):
+
+```bash
+#!/bin/bash
+
+## CONFIGURATION ##
+AWS_ACCESS_KEY_ID=GKxxxx
+AWS_SECRET_ACCESS_KEY=xxxx
+AWS_ENDPOINT_URL=http://localhost:3900
+S3_BUCKET=matrix
+MEDIA_STORE=/var/lib/matrix-synapse/media
+PG_USER=matrix
+PG_PASS=xxxx
+PG_DB=synapse
+PG_HOST=localhost
+PG_PORT=5432
+
+## CODE ##
+PATH=$HOME/.local/bin/:$PATH
+cat > database.yaml <<EOF
+user: $PG_USER
+password: $PG_PASS
+database: $PG_DB
+host: $PG_HOST
+port: $PG_PORT
+EOF
+
+s3_media_upload update-db 1d
+s3_media_upload --no-progress check-deleted $MEDIA_STORE
+s3_media_upload --no-progress upload $MEDIA_STORE $S3_BUCKET --delete --endpoint-url $AWS_ENDPOINT_URL
+```
+
+Make executable and add to crontab:
+
+```bash
+chmod +x ~/.local/bin/matrix-cache-gc
+crontab -e
+# Add: */10 * * * * $HOME/.local/bin/matrix-cache-gc
+```
+
+## Gitea
+
+Gitea can store Git LFS data, avatars, and attachments in Garage.
+
+### Setup
+
+```bash
+garage key create gitea-key
+garage bucket create gitea
+garage bucket allow gitea --read --write --key gitea-key
+```
+
+### Configuration
+
+<Tabs>
+  <Tab title="Config File">
+    Edit `/etc/gitea/conf/app.ini`:
+    ```ini
+    [storage]
+    STORAGE_TYPE=minio
+    MINIO_ENDPOINT=localhost:3900
+    MINIO_ACCESS_KEY_ID=GKxxxx
+    MINIO_SECRET_ACCESS_KEY=xxxx
+    MINIO_BUCKET=gitea
+    MINIO_LOCATION=garage
+    MINIO_USE_SSL=false
+    ```
+  </Tab>
+  <Tab title="Environment Variables">
+    ```bash
+    GITEA__storage__STORAGE_TYPE=minio
+    GITEA__storage__MINIO_ENDPOINT=localhost:3900
+    GITEA__storage__MINIO_ACCESS_KEY_ID=GKxxxx
+    GITEA__storage__MINIO_SECRET_ACCESS_KEY=xxxx
+    GITEA__storage__MINIO_BUCKET=gitea
+    GITEA__storage__MINIO_LOCATION=garage
+    GITEA__storage__MINIO_USE_SSL=false
+    ```
+  </Tab>
+</Tabs>
+
+Restart Gitea and test by uploading a custom avatar.
+
+## Pleroma
+
+Pleroma natively supports S3 storage for media files.
+
+### Setup
+
+```bash
+garage key new --name pleroma-key
+garage bucket create pleroma
+garage bucket allow pleroma --read --write --owner --key pleroma-key
+garage bucket website --allow pleroma
+```
+
+### Configuration
+
+Edit `/etc/pleroma/config.exs`:
+
+```elixir
+config :pleroma, Pleroma.Upload,
+  uploader: Pleroma.Uploaders.S3,
+  base_url: "https://pleroma.garage.example.tld"
+
+config :ex_aws, :s3,
+  access_key_id: "GKxxxx",
+  secret_access_key: "xxxx",
+  region: "garage",
+  host: "api.garage.example.tld"
+```
+
+### Data Migration
+
+Sync existing uploads:
+
+```bash
+mc mirror /var/lib/pleroma/uploads/ garage/pleroma
+```
+
+## Lemmy
+
+Lemmy uses pict-rs for media handling, which supports S3 backends (requires pict-rs >= 4.0.0).
+
+### Setup
+
+```bash
+garage key new --name pictrs-key
+garage bucket create pictrs-data
+garage bucket allow pictrs-data --read --write --key pictrs-key
+```
+
+### Configuration
+
+<Tabs>
+  <Tab title="Config File">
+    Add to `pict-rs.toml`:
+    ```toml
+    [store]
+    type = 'object_storage'
+    endpoint = 'http://my-garage-instance.mydomain.tld:3900'
+    bucket_name = 'pictrs-data'
+    region = 'garage'
+    access_key = 'GKxxxx'
+    secret_key = 'xxxx'
+    ```
+  </Tab>
+  <Tab title="Environment Variables">
+    ```bash
+    PICTRS__STORE__TYPE=object_storage
+    PICTRS__STORE__ENDPOINT=http://my-garage-instance.mydomain.tld:3900
+    PICTRS__STORE__BUCKET_NAME=pictrs-data
+    PICTRS__STORE__REGION=garage
+    PICTRS__STORE__ACCESS_KEY=GKxxxx
+    PICTRS__STORE__SECRET_KEY=xxxx
+    ```
+  </Tab>
+</Tabs>
+
+## ejabberd
+
+ejabberd XMPP server can use Garage for media uploads via `mod_s3_upload`.
+
+### Setup
+
+```bash
+ejabberdctl module_install mod_s3_upload
+
+garage key new --name ejabberd
+garage bucket create objects.xmpp-server.fr
+garage bucket allow objects.xmpp-server.fr --read --write --key ejabberd
+garage bucket website --allow objects.xmpp-server.fr
+```
+
+### Configuration
+
+```yaml
+mod_s3_upload:
+  bucket_url: https://my-garage-instance.mydomain.tld/objects.xmpp-server.fr
+  access_key_id: GKxxxx
+  access_key_secret: xxxx
+  region: garage
+  download_url: https://objects.xmpp-server.fr
+```
+
+<Note>
+Users should enable E2EE to protect data-at-rest since media is publicly accessible via URLs.
+</Note>
+
+## Ente
+
+Ente is a self-hostable alternative to Google Photos and Apple Photos.
+
+### Setup
+
+```bash
+garage bucket create ente
+garage key create ente-key
+garage bucket allow ente --read --write --owner --key ente-key
+```
+
+### Configure CORS
+
+```bash
+export CORS='{"CORSRules":[{"AllowedHeaders":["*"],"AllowedMethods":["GET","PUT","POST","DELETE"],"AllowedOrigins":["*"],"ExposeHeaders":["ETag"]}]}'
+aws s3api put-bucket-cors --bucket ente --cors-configuration $CORS
+```
+
+### Configure Ente
+
+Create `credentials.yaml`:
+
+```yaml
+db:
+  host: postgres
+  port: 5432
+  name: ente_db
+  user: ente_user
+  password: ente_password
+
+s3:
+  hot_storage:
+    primary: b2-eu-cen
+  
+  are_local_buckets: true
+  
+  b2-eu-cen:
+    key: GKxxxx
+    secret: xxxx
+    endpoint: garage:3900
+    region: garage
+    bucket: ente
+    use_path_style: true
+```
+
+Run with Docker:
+
+```bash
+docker run -d --name ente-server \
+  --restart unless-stopped \
+  -v /path/to/museum.yaml:/museum.yaml \
+  -v /path/to/credentials.yaml:/credentials.yaml \
+  -p 8080:8080 \
+  ghcr.io/ente-io/ente-server
+```
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="CLI Tools" icon="terminal" href="/integration/cli-tools">
+    Configure AWS CLI, rclone, and other S3 tools
+  </Card>
+  <Card title="Static Websites" icon="browser" href="/integration/websites">
+    Host static websites with Hugo, Jekyll, and more
+  </Card>
+  <Card title="Backup Tools" icon="database" href="/integration/backup">
+    Use Restic, Duplicity, and other backup solutions
+  </Card>
+  <Card title="Docker Registry" icon="docker" href="/integration/docker">
+    Configure Docker registry with Garage backend
+  </Card>
+</CardGroup>

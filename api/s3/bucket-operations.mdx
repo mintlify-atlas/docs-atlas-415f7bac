@@ -1,0 +1,360 @@
+---
+title: Bucket Operations
+description: S3 bucket management operations in Garage
+---
+
+This page documents the S3 API operations for managing buckets in Garage.
+
+## CreateBucket
+
+Creates a new S3 bucket.
+
+```http
+PUT /{bucket} HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Request Body (Optional)
+
+```xml
+<CreateBucketConfiguration>
+  <LocationConstraint>garage</LocationConstraint>
+</CreateBucketConfiguration>
+```
+
+<ParamField body="LocationConstraint" type="string">
+  The region where the bucket should be created. Must match the Garage S3 region configuration.
+</ParamField>
+
+### Example
+
+```bash
+aws s3 mb s3://my-bucket --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl -X PUT https://s3.garage.example.com/my-bucket \
+  -H "Authorization: AWS4-HMAC-SHA256 ..."
+```
+
+### Response
+
+```http
+HTTP/1.1 200 OK
+Location: /my-bucket
+```
+
+### Error Responses
+
+| Error | Status | Description |
+|-------|--------|-------------|
+| `BucketAlreadyOwnedByYou` | 409 | You already own this bucket |
+| `BucketAlreadyExists` | 409 | Bucket exists and is owned by another user |
+| `InvalidBucketName` | 400 | Bucket name is invalid |
+
+<Note>
+  The access key must have the `allow_create_bucket` permission enabled. Bucket names must follow [S3 naming rules](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html).
+</Note>
+
+## DeleteBucket
+
+Deletes an empty bucket.
+
+```http
+DELETE /{bucket} HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Example
+
+```bash
+aws s3 rb s3://my-bucket --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl -X DELETE https://s3.garage.example.com/my-bucket \
+  -H "Authorization: AWS4-HMAC-SHA256 ..."
+```
+
+### Response
+
+```http
+HTTP/1.1 204 No Content
+```
+
+### Error Responses
+
+| Error | Status | Description |
+|-------|--------|-------------|
+| `BucketNotEmpty` | 409 | Bucket contains objects and cannot be deleted |
+| `NoSuchBucket` | 404 | Bucket does not exist |
+
+<Warning>
+  The bucket must be empty before it can be deleted. Use [ListObjectsV2](#listobjectsv2) and [DeleteObjects](/api/s3/object-operations#deleteobjects) to remove all objects first.
+</Warning>
+
+## HeadBucket
+
+Checks if a bucket exists and you have permission to access it.
+
+```http
+HEAD /{bucket} HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Example
+
+```bash cURL
+curl -I https://s3.garage.example.com/my-bucket \
+  -H "Authorization: AWS4-HMAC-SHA256 ..."
+```
+
+### Response
+
+```http
+HTTP/1.1 200 OK
+```
+
+### Error Responses
+
+| Error | Status | Description |
+|-------|--------|-------------|
+| `NotFound` | 404 | Bucket does not exist or access denied |
+
+## ListBuckets
+
+Returns a list of all buckets accessible to the authenticated user.
+
+```http
+GET / HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Example
+
+```bash
+aws s3 ls --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl https://s3.garage.example.com/ \
+  -H "Authorization: AWS4-HMAC-SHA256 ..."
+```
+
+### Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<ListAllMyBucketsResult>
+  <Owner>
+    <ID>GK...</ID>
+    <DisplayName>my-key</DisplayName>
+  </Owner>
+  <Buckets>
+    <Bucket>
+      <Name>my-bucket</Name>
+      <CreationDate>2026-03-04T10:30:00.000Z</CreationDate>
+    </Bucket>
+  </Buckets>
+</ListAllMyBucketsResult>
+```
+
+## GetBucketLocation
+
+Returns the region where a bucket is located.
+
+```http
+GET /{bucket}?location HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Example
+
+```bash
+aws s3api get-bucket-location --bucket my-bucket \
+  --endpoint-url https://s3.garage.example.com
+```
+
+### Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<LocationConstraint>garage</LocationConstraint>
+```
+
+## ListObjects
+
+Lists objects in a bucket (version 1).
+
+```http
+GET /{bucket}?list-type=1 HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Query Parameters
+
+<ParamField query="delimiter" type="string">
+  Character used to group keys (commonly `/`)
+</ParamField>
+
+<ParamField query="encoding-type" type="string">
+  Encoding for keys in the response. Supported value: `url`
+</ParamField>
+
+<ParamField query="marker" type="string">
+  Key to start listing from (for pagination)
+</ParamField>
+
+<ParamField query="max-keys" type="integer" default="1000">
+  Maximum number of keys to return (1-1000)
+</ParamField>
+
+<ParamField query="prefix" type="string">
+  Limit results to keys that begin with this prefix
+</ParamField>
+
+### Example
+
+```bash
+aws s3api list-objects --bucket my-bucket \
+  --endpoint-url https://s3.garage.example.com
+```
+
+<Note>
+  ListObjectsV2 is recommended over ListObjects for new applications.
+</Note>
+
+## ListObjectsV2
+
+Lists objects in a bucket (version 2, recommended).
+
+```http
+GET /{bucket}?list-type=2 HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Query Parameters
+
+<ParamField query="continuation-token" type="string">
+  Token for pagination (from previous response)
+</ParamField>
+
+<ParamField query="delimiter" type="string">
+  Character used to group keys
+</ParamField>
+
+<ParamField query="encoding-type" type="string">
+  Encoding for keys in the response. Supported value: `url`
+</ParamField>
+
+<ParamField query="max-keys" type="integer" default="1000">
+  Maximum number of keys to return (1-1000)
+</ParamField>
+
+<ParamField query="prefix" type="string">
+  Limit results to keys that begin with this prefix
+</ParamField>
+
+<ParamField query="start-after" type="string">
+  Key to start listing after
+</ParamField>
+
+### Example
+
+```bash
+aws s3api list-objects-v2 --bucket my-bucket --prefix "images/" \
+  --endpoint-url https://s3.garage.example.com
+```
+
+```bash cURL
+curl "https://s3.garage.example.com/my-bucket?list-type=2&prefix=images/" \
+  -H "Authorization: AWS4-HMAC-SHA256 ..."
+```
+
+### Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+  <Name>my-bucket</Name>
+  <Prefix>images/</Prefix>
+  <KeyCount>2</KeyCount>
+  <MaxKeys>1000</MaxKeys>
+  <IsTruncated>false</IsTruncated>
+  <Contents>
+    <Key>images/photo1.jpg</Key>
+    <LastModified>2026-03-04T10:30:00.000Z</LastModified>
+    <ETag>&quot;abc123&quot;</ETag>
+    <Size>1024000</Size>
+    <StorageClass>STANDARD</StorageClass>
+  </Contents>
+</ListBucketResult>
+```
+
+## GetBucketVersioning
+
+Returns the versioning state of a bucket.
+
+```http
+GET /{bucket}?versioning HTTP/1.1
+Host: s3.garage.example.com
+```
+
+### Response
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<VersioningConfiguration/>
+```
+
+<Warning>
+  Garage does **not** support bucket versioning. This endpoint always returns that versioning is not enabled.
+</Warning>
+
+## Additional Bucket Operations
+
+Garage also implements the following bucket operations:
+
+### Website Hosting
+
+- `GetBucketWebsite` - Get website configuration
+- `PutBucketWebsite` - Configure static website hosting (partial support)
+- `DeleteBucketWebsite` - Remove website configuration
+
+See the [Static Website Hosting](/integration/websites) guide for details.
+
+### CORS
+
+- `GetBucketCors` - Get CORS configuration
+- `PutBucketCors` - Set CORS rules
+- `DeleteBucketCors` - Remove CORS configuration
+
+### Lifecycle
+
+- `GetBucketLifecycleConfiguration` - Get lifecycle rules
+- `PutBucketLifecycleConfiguration` - Set lifecycle rules (partial support)
+- `DeleteBucketLifecycle` - Remove lifecycle configuration
+
+<Info>
+  Lifecycle rules in Garage support only `AbortIncompleteMultipartUpload` and `Expiration` actions.
+</Info>
+
+## Unsupported Operations
+
+The following bucket operations are **not implemented** in Garage:
+
+- Bucket policies (`GetBucketPolicy`, `PutBucketPolicy`, `DeleteBucketPolicy`)
+- Bucket ACLs (`GetBucketAcl`, `PutBucketAcl`)
+- Bucket versioning (`PutBucketVersioning`, `ListObjectVersions`)
+- Bucket encryption (`GetBucketEncryption`, `PutBucketEncryption`)
+- Bucket tagging, notifications, analytics, metrics, etc.
+
+<Note>
+  Garage uses its own permission system. See the [Access Control](/api/admin/keys) guide for details.
+</Note>
+
+## See Also
+
+- [Object Operations](/api/s3/object-operations)
+- [Multipart Uploads](/api/s3/multipart-uploads)
+- [S3 Compatibility Reference](/api/s3-compatibility)

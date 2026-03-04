@@ -1,0 +1,269 @@
+---
+title: 'Data Durability and Repairs'
+description: 'Repair operations to ensure data consistency and durability in your Garage cluster'
+---
+
+To ensure the best durability of your data and fix any inconsistencies that may arise in a distributed system, Garage provides a series of repair operations. This guide explains each operation and when to use them.
+
+## General Syntax
+
+Repair operations follow this format:
+
+```bash
+garage repair <repair_name>
+```
+
+<Warning>
+Repair operations require the `--yes` flag to execute:
+```bash
+garage repair --yes <repair_name>
+```
+</Warning>
+
+By default, repairs run only on the node your CLI connects to. To run on all nodes:
+
+```bash
+garage repair -a --yes <repair_name>
+```
+
+## Data Block Operations
+
+### Data Store Scrub
+
+Scrubbing examines each individual data block to verify correctness by checking hashes. Corrupted blocks (from bitrot or accidental datastore manipulation) are restored from nodes with valid copies.
+
+**Automatic scheduling:** Garage automatically schedules scrubs every 25-35 days (randomized to spread load).
+
+View the next scheduled scrub:
+```bash
+garage worker get
+```
+
+**Manual scrub:**
+```bash
+garage repair scrub start
+```
+
+**Check scrub status:**
+
+1. Find the scrub worker task ID:
+   ```bash
+   garage worker list
+   ```
+
+2. View detailed statistics:
+   ```bash
+   garage worker info <scrub_task_id>
+   ```
+
+**Pause a scrub:**
+```bash
+garage repair scrub pause
+```
+
+<Note>
+Scrubs automatically resume after 24 hours. Garage will not let your cluster run indefinitely without regular scrubs.
+</Note>
+
+**Adjust scrub intensity:**
+
+If scrubbing is too intensive and affecting performance:
+
+```bash
+garage worker set scrub-tranquility <value>
+```
+
+Higher tranquility values create longer pauses between block verifications, reducing load but extending total scrub time.
+
+### Block Check and Resync
+
+Fixes cases where:
+- Nodes reference blocks that don't exist on disk
+- Nodes have on-disk blocks that are no longer referenced
+
+```bash
+garage repair blocks
+```
+
+<Note>
+**Recommended:** Run this after changing cluster layout, once metadata tables have synchronized (usually a few hours after `garage layout apply`).
+</Note>
+
+### Inspecting Lost Blocks
+
+In rare situations, data blocks may be unavailable from the entire cluster. These errors are stored in a "block resync errors" list.
+
+**List blocks with resync errors:**
+```bash
+garage block list-errors
+```
+
+Errors typically fall into three categories:
+
+1. **Metadata inconsistency:** Block still referenced but object was deleted
+2. **Transient error:** Block couldn't be fetched due to temporary issue (network failure)
+3. **Permanent loss:** Block not available anywhere in the cluster
+
+**Get information about a specific block:**
+```bash
+garage block info <block_hash>
+```
+
+This shows which objects reference the block, helping distinguish between the categories above.
+
+**Retry fetching a block immediately:**
+```bash
+garage block retry-now <block_hash>
+```
+
+Or retry all errored blocks:
+```bash
+garage block retry-now --all
+```
+
+<Warning>
+If a data block is permanently lost (category 3), you must declare the S3 objects as unrecoverable and delete them:
+
+```bash
+garage block purge --yes <block_hash>
+```
+
+This is a destructive operation and should only be used when data is definitely unrecoverable.
+</Warning>
+
+### Rebalancing Data Directories
+
+In [multi-HDD setups](/operations/multi-hdd), ensure data blocks are balanced between storage locations:
+
+```bash
+garage repair rebalance
+```
+
+**When to use:**
+- After adding storage locations
+- After changing storage location capacities
+- To move data out of read-only locations
+
+Once finished, Garage knows the single possible location for each block, improving access speed.
+
+## Metadata Operations
+
+### Metadata Snapshotting
+
+<Note>
+It's good practice to set up automatic snapshotting of your metadata database file to recover from corruption.
+</Note>
+
+Garage can take snapshots of the metadata database itself (since v0.9.4):
+
+**Take a manual snapshot:**
+```bash
+garage meta snapshot
+```
+
+**Take snapshots on all nodes:**
+```bash
+garage meta snapshot --all
+```
+
+**Configure automatic snapshots:**
+
+Set `metadata_auto_snapshot_interval` in your configuration file:
+
+```toml
+metadata_auto_snapshot_interval = "24h"
+```
+
+<Note>
+Taking a snapshot is intensive as it requires a full copy of the database file. Consider using filesystem-level snapshots (ZFS, BTRFS) if available.
+</Note>
+
+For recovery instructions, see [Corrupted Metadata Recovery](/operations/recovering#corrupted_meta).
+
+### Metadata Table Resync
+
+Garage automatically resyncs metadata tables hourly using Merkle trees to efficiently find differences between nodes.
+
+**Manual table resync:**
+```bash
+garage repair tables
+```
+
+**Run on all nodes:**
+```bash
+garage repair -a --yes tables
+```
+
+This is quick to run (typically less than a minute) and recommended before upgrades.
+
+### Metadata Table Reference Fixes
+
+In rare cases where nodes are unavailable, references between objects may break (e.g., deleted objects may still have underlying versions or data blocks).
+
+**Fix orphan versions:**
+```bash
+garage repair versions
+```
+
+Checks that all versions belong to a non-deleted object and purges orphans.
+
+**Fix orphan block references:**
+```bash
+garage repair block-refs
+```
+
+Checks that all block references belong to a non-deleted object version. Orphan block references are purged, allowing blocks to be garbage-collected.
+
+**Fix block reference counters:**
+```bash
+garage repair block-rc
+```
+
+Checks that reference counters for blocks match the actual number of non-deleted entries in the block reference table.
+
+## Complete Repair List
+
+Here's a summary of all available repair operations:
+
+| Command | Description | Run After |
+|---------|-------------|----------|
+| `scrub start` | Verify integrity of all blocks | Automatic |
+| `blocks` | Resync block references and files | Layout changes |
+| `tables` | Full sync of metadata tables | Before upgrades |
+| `versions` | Fix orphan versions | Suspected corruption |
+| `block-refs` | Fix orphan block references | Suspected corruption |
+| `block-rc` | Recalculate block reference counters | Suspected corruption |
+| `rebalance` | Balance blocks across HDDs | Multi-HDD changes |
+
+## Best Practices
+
+1. **Run `garage repair tables`** before major operations or upgrades
+2. **Monitor scrub operations** - they should complete successfully
+3. **Investigate non-zero `block_resync_errored_blocks`** metrics immediately
+4. **Snapshot metadata regularly** using automatic snapshots or filesystem features
+5. **Run `garage repair blocks`** after layout changes
+6. **Test repairs** on non-production clusters first
+
+## Monitoring Repairs
+
+Key metrics to monitor:
+
+```
+# Should be zero or quickly return to zero
+block_resync_errored_blocks 0
+
+# Normal to be non-zero during operations
+block_resync_queue_length 42
+
+# Track repair progress
+table_merkle_updater_todo_queue_length 0
+```
+
+See [Monitoring and Metrics](/operations/monitoring) for complete details.
+
+## See Also
+
+- [Disaster Recovery](/operations/recovering)
+- [Multi-HDD Setup](/operations/multi-hdd)
+- [Monitoring and Metrics](/operations/monitoring)
+- [Upgrading Garage](/operations/upgrading)

@@ -1,0 +1,265 @@
+---
+title: 'Upgrading Garage'
+description: 'Learn how to safely upgrade your Garage cluster between versions'
+---
+
+Garage is a stateful clustered application where all nodes communicate and share data structures. This makes upgrades more complex than stateless applications, requiring careful planning and execution.
+
+## Understanding Upgrade Types
+
+There are two types of upgrades:
+
+- **Minor upgrade:** Protocols and data structures remain the same
+- **Major upgrade:** Protocols or data structures changed
+
+### Version Numbering
+
+You can identify the upgrade type from the version number:
+
+- **Major upgrade:** First nonzero component changes (e.g., v0.7.2 → v0.8.0)
+- **Minor upgrade:** First nonzero component stays the same (e.g., v0.8.0 → v0.8.1)
+
+<Warning>
+**Major upgrades must be run between contiguous versions only.**
+
+Supported:
+- v0.7.1 → v0.8.0 ✓
+- v0.7.0 → v0.8.2 ✓
+
+Not supported:
+- v0.6.0 → v0.8.0 ✗
+</Warning>
+
+## Monitoring Current Versions
+
+The `garage_build_info` Prometheus metric shows which Garage versions are running in your cluster:
+
+```
+garage_build_info{version="1.0.0"} 1
+```
+
+See the [Monitoring guide](/operations/monitoring) for more details.
+
+## Minor Upgrades
+
+Minor upgrades do not require cluster downtime.
+
+### Preparation
+
+1. **Read the changelog** at [git.deuxfleurs.fr/Deuxfleurs/garage/releases](https://git.deuxfleurs.fr/Deuxfleurs/garage/releases)
+2. **Test on a staging cluster** if possible
+3. **Check cluster health:**
+
+```bash
+garage repair --all-nodes --yes tables
+```
+
+This runs quickly (less than a minute) and verifies metadata consistency.
+
+4. **Verify repairs completed:**
+
+Check daemon logs or run:
+```bash
+garage worker list
+```
+
+Repair workers should be in the `Done` state.
+
+### Upgrade Process
+
+Upgrade nodes one by one:
+
+1. Stop the Garage daemon
+2. Install the new binary
+3. Update configuration if needed
+4. Restart the daemon
+5. Repeat for next node
+
+<Note>
+The cluster remains available during the entire process. Take your time between nodes to monitor for any issues.
+</Note>
+
+## Major Upgrades
+
+Major upgrades can be done with minimal downtime with preparation, but the simplest method is putting the cluster offline during migration.
+
+<Warning>
+Before a major upgrade:
+- **Read the changelog** at [git.deuxfleurs.fr/Deuxfleurs/garage/releases](https://git.deuxfleurs.fr/Deuxfleurs/garage/releases)
+- **Test on a staging cluster** first
+- **Locate version-specific migration guides** in the "Working Documents" section
+</Warning>
+
+### Method 1: Full Downtime (Recommended)
+
+This is the safest approach:
+
+#### Step 1: Preparation
+
+1. **Disable API access** (in reverse proxy or configuration)
+2. **Verify cluster is idle** - check for active requests
+3. **Check cluster health:**
+
+```bash
+garage repair
+```
+
+#### Step 2: Shutdown and Backup
+
+4. **Stop all Garage nodes**
+5. **Backup metadata folders** on all nodes
+
+<Note>
+Data blocks are immutable and don't need backing up, but metadata must be preserved to enable rollback.
+</Note>
+
+#### Step 3: Upgrade
+
+6. **Install new binary** and update configuration on all nodes
+7. **Start all Garage nodes**
+8. **Run migrations** if needed:
+
+```bash
+garage migrate
+```
+
+Check version-specific documentation for required migrations.
+
+#### Step 4: Verification
+
+9. **Check cluster health:**
+
+```bash
+garage repair
+garage status
+```
+
+10. **Re-enable API access**
+11. **Monitor cluster load** and application behavior
+
+### Method 2: Minimal Downtime (Advanced)
+
+Minimal downtime is possible by coordinating a simultaneous restart of all nodes.
+
+<Note>
+The downtime is limited to the time needed for all nodes to stop and start (typically less than a minute).
+</Note>
+
+#### Step 1: Preparation
+
+1. **Check cluster health:**
+
+```bash
+garage repair
+```
+
+2. **Backup metadata** on all nodes:
+
+**Option A:** Snapshot each node individually
+
+Take nodes offline one at a time to back up their metadata folder. You can do all nodes in a single zone at once without impacting global availability.
+
+<Warning>
+Never manually copy the metadata folder of a running node.
+</Warning>
+
+**Option B:** Use Garage snapshots (v0.9.4+)
+
+```bash
+garage meta snapshot --all
+```
+
+This creates simultaneous snapshots across all nodes without taking them offline.
+
+<Note>
+If automatic snapshotting is enabled, Garage only keeps the last two snapshots. Consider disabling automatic snapshots until the upgrade is confirmed successful.
+</Note>
+
+Also back up the `cluster_layout` file from any node (it's the same on all nodes and can be copied while Garage is running).
+
+#### Step 2: Preparation
+
+3. **Prepare new binaries and configuration files** on all nodes
+
+#### Step 3: Coordinated Restart
+
+4. **Restart all nodes simultaneously** in the new version
+
+<Warning>
+If nodes fail to restart simultaneously, some nodes might be temporarily shut out as different RPC protocol versions cannot communicate.
+</Warning>
+
+#### Step 4: Post-Upgrade
+
+5. **Run required migrations** per version-specific documentation
+
+Migrations are typically one of two types:
+- **Online:** Can run on live nodes during normal operation
+- **Offline:** Requires taking nodes offline again one by one
+
+## Troubleshooting
+
+### Nodes Not Communicating After Upgrade
+
+**Cause:** Nodes upgraded at different times using incompatible RPC protocols.
+
+**Solution:** Complete the upgrade on all remaining nodes as quickly as possible.
+
+### Migration Fails
+
+**Cause:** Cluster state incompatible with new version.
+
+**Solution:**
+1. Review migration logs for specific errors
+2. Restore from metadata backups if necessary
+3. Consult version-specific upgrade documentation
+
+### Cluster Performance Degraded
+
+**Cause:** New version resyncing data or running background migrations.
+
+**Solution:**
+1. Check `garage stats -a` for ongoing operations
+2. Monitor `garage worker list` for active background tasks
+3. Allow time for stabilization (may take hours for large clusters)
+
+## Version-Specific Guides
+
+Major version upgrades may require special procedures. Check the "Working Documents" section for:
+
+- v0.7.x → v0.8.x migration guide
+- v0.8.x → v0.9.x migration guide
+- v0.9.x → v1.0.x migration guide
+
+## Best Practices
+
+1. **Always test upgrades** in a staging environment first
+2. **Back up metadata** before any major upgrade
+3. **Read the changelog** thoroughly
+4. **Monitor during and after** upgrades
+5. **Upgrade during low-traffic periods**
+6. **Document your upgrade procedure** for your specific deployment
+7. **Have a rollback plan** with metadata backups ready
+
+## Rollback Procedure
+
+If an upgrade fails:
+
+1. **Stop all Garage nodes**
+2. **Restore metadata backups** on all nodes
+3. **Reinstall previous version** binaries
+4. **Restore previous configuration** files
+5. **Restart all nodes**
+6. **Verify cluster health:**
+
+```bash
+garage status
+garage repair --all-nodes --yes tables
+```
+
+## See Also
+
+- [Configuration Reference](/cli/configuration)
+- [Monitoring and Metrics](/operations/monitoring)
+- [Disaster Recovery](/operations/recovering)
+- [Cluster Layout Management](/operations/cluster-layout)

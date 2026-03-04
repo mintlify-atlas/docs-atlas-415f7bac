@@ -1,0 +1,720 @@
+---
+title: K2V Operations
+description: Detailed reference for K2V API endpoints and operations
+---
+
+## Single Item Operations
+
+### ReadItem
+
+Read a single item by partition key and sort key.
+
+**Endpoint**: `GET /<bucket>/<partition_key>?sort_key=<sort_key>`
+
+**Query Parameters**:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `sort_key` | Yes | The sort key of the item to read |
+
+**Response Formats**:
+
+Values can be returned in two formats, controlled by the `Accept` header:
+
+1. **JSON format** (`Content-Type: application/json`)
+   - Returns a JSON array of base64-encoded values
+   - Tombstones are represented as `null`
+   - Always used when multiple concurrent values exist
+
+2. **Binary format** (`Content-Type: application/octet-stream`)
+   - Returns the single value directly as binary
+   - Returns HTTP 204 NO CONTENT for tombstones
+   - Returns HTTP 409 CONFLICT if multiple concurrent values exist
+
+**Accept Header Behavior**:
+
+- No `Accept` header or `Accept: application/json` → JSON format
+- `Accept: application/octet-stream` → Binary format if single value, 409 if conflicts
+- `Accept: application/json, application/octet-stream` → Binary for single value, JSON for conflicts
+- Other values → HTTP 406 NOT ACCEPTABLE
+
+**Response Headers**:
+
+- `X-Garage-Causality-Token`: Causality token for this item (required for writes)
+
+**Example Request**:
+
+```bash
+GET /my-bucket/mailboxes?sort_key=INBOX HTTP/1.1
+Host: k2v.garage.example.com
+```
+
+**Example Response (JSON)**:
+
+```json
+HTTP/1.1 200 OK
+X-Garage-Causality-Token: opaquetoken123
+Content-Type: application/json
+
+[
+  "YjY0Y3J5cHRvYmxvYjEyMw==",
+  "YjY0Y3J5cHRvYmxvYicxMjM="
+]
+```
+
+**Example Response (Tombstone)**:
+
+```json
+HTTP/1.1 200 OK
+X-Garage-Causality-Token: opaquetoken999
+Content-Type: application/json
+
+[null]
+```
+
+**Example Response (Binary)**:
+
+```bash
+HTTP/1.1 200 OK
+X-Garage-Causality-Token: opaquetoken123
+Content-Type: application/octet-stream
+
+<binary data>
+```
+
+---
+
+### InsertItem
+
+Insert or update a single item.
+
+**Endpoint**: `PUT /<bucket>/<partition_key>?sort_key=<sort_key>`
+
+**Query Parameters**:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `sort_key` | Yes | The sort key of the item to insert |
+
+**Request Headers**:
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-Garage-Causality-Token` | No | Causality token from previous read. Omit for first write to key. |
+
+**Request Body**: Binary data (the value to store)
+
+**Response**: HTTP 204 NO CONTENT on success
+
+**Example Request**:
+
+```bash
+PUT /my-bucket/mailboxes?sort_key=INBOX HTTP/1.1
+Host: k2v.garage.example.com
+X-Garage-Causality-Token: opaquetoken123
+Content-Length: 1024
+
+<binary data>
+```
+
+**Example Response**:
+
+```bash
+HTTP/1.1 204 No Content
+```
+
+<Note>
+If you omit the `X-Garage-Causality-Token` header, the write will create a concurrent value rather than overwriting existing values. Always include the causality token when updating existing items.
+</Note>
+
+---
+
+### DeleteItem
+
+Delete a single item by creating a tombstone.
+
+**Endpoint**: `DELETE /<bucket>/<partition_key>?sort_key=<sort_key>`
+
+**Query Parameters**:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `sort_key` | Yes | The sort key of the item to delete |
+
+**Request Headers**:
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-Garage-Causality-Token` | Yes | Causality token from previous read |
+
+**Response**: HTTP 204 NO CONTENT on success
+
+**Example Request**:
+
+```bash
+DELETE /my-bucket/mailboxes?sort_key=INBOX HTTP/1.1
+Host: k2v.garage.example.com
+X-Garage-Causality-Token: opaquetoken123
+```
+
+**Example Response**:
+
+```bash
+HTTP/1.1 204 NO CONTENT
+```
+
+<Warning>
+The `X-Garage-Causality-Token` header is mandatory for delete operations. This ensures the delete is causally related to values you've read.
+</Warning>
+
+---
+
+### PollItem
+
+Wait for changes to a single item.
+
+**Endpoint**: `GET /<bucket>/<partition_key>?sort_key=<sort_key>&causality_token=<token>`
+
+**Query Parameters**:
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `sort_key` | Yes | - | The sort key of the item to poll |
+| `causality_token` | Yes | - | The causality token from your last read |
+| `timeout` | No | 300 | Timeout in seconds (max 600) |
+
+**Response**: Same format as ReadItem, or HTTP 304 NOT MODIFIED if timeout expires
+
+**Example Request**:
+
+```bash
+GET /my-bucket/mailboxes?sort_key=INBOX&causality_token=opaquetoken123&timeout=60 HTTP/1.1
+Host: k2v.garage.example.com
+```
+
+**Example Response (Updated)**:
+
+```json
+HTTP/1.1 200 OK
+X-Garage-Causality-Token: opaquetoken456
+Content-Type: application/json
+
+["bmV3dmFsdWU="]
+```
+
+**Example Response (No Change)**:
+
+```bash
+HTTP/1.1 304 NOT MODIFIED
+```
+
+---
+
+## Batch Operations
+
+### ReadBatch
+
+Read multiple items in a single request.
+
+**Endpoint**: `POST /<bucket>?search` or `SEARCH /<bucket>`
+
+**Request Body**: JSON array of query objects
+
+**Query Object Fields**:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `partitionKey` | Yes | - | Partition key to search in |
+| `prefix` | No | `null` | Filter sort keys by prefix |
+| `start` | No | `null` | First sort key to read |
+| `end` | No | `null` | Last sort key to read (exclusive) |
+| `limit` | No | `null` | Maximum number of items to return |
+| `reverse` | No | `false` | Iterate in reverse order |
+| `singleItem` | No | `false` | Return only item with sort key = `start` |
+| `conflictsOnly` | No | `false` | Return only items with conflicts |
+| `tombstones` | No | `false` | Include tombstone entries |
+
+**Response**: JSON array of result objects (one per query)
+
+**Result Object Fields**:
+
+| Field | Description |
+|-------|-------------|
+| `partitionKey` | Echo of query partition key |
+| `prefix`, `start`, `end`, `limit`, `reverse` | Echo of query parameters |
+| `singleItem`, `conflictsOnly`, `tombstones` | Echo of query flags |
+| `items` | Array of item objects |
+| `more` | Boolean indicating more items available |
+| `nextStart` | Sort key to use for next page (if `more` is true) |
+
+**Item Object Format**:
+
+```json
+{
+  "sk": "<sort_key>",
+  "ct": "<causality_token>",
+  "v": ["<base64_value1>", "<base64_value2>", ...]
+}
+```
+
+**Example Request**:
+
+```json
+POST /my-bucket?search HTTP/1.1
+Host: k2v.garage.example.com
+Content-Type: application/json
+
+[
+  {
+    "partitionKey": "mailboxes"
+  },
+  {
+    "partitionKey": "mailbox:INBOX",
+    "start": "001892831",
+    "limit": 3
+  },
+  {
+    "partitionKey": "keys",
+    "start": "0",
+    "singleItem": true
+  }
+]
+```
+
+**Example Response**:
+
+```json
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+[
+  {
+    "partitionKey": "mailboxes",
+    "prefix": null,
+    "start": null,
+    "end": null,
+    "limit": null,
+    "reverse": false,
+    "conflictsOnly": false,
+    "tombstones": false,
+    "singleItem": false,
+    "items": [
+      {
+        "sk": "INBOX",
+        "ct": "opaquetoken123",
+        "v": ["YjY0Y3J5cHRvYmxvYjEyMw==", "YjY0Y3J5cHRvYmxvYicxMjM="]
+      },
+      {
+        "sk": "Trash",
+        "ct": "opaquetoken456",
+        "v": ["YjY0Y3J5cHRvYmxvYjQ1Ng=="]
+      }
+    ],
+    "more": false,
+    "nextStart": null
+  },
+  {
+    "partitionKey": "mailbox:INBOX",
+    "prefix": null,
+    "start": "001892831",
+    "end": null,
+    "limit": 3,
+    "reverse": false,
+    "conflictsOnly": false,
+    "tombstones": false,
+    "singleItem": false,
+    "items": [
+      {
+        "sk": "001892831",
+        "ct": "opaquetoken321",
+        "v": ["YjY0Y3J5cHRvYmxvYjMyMQ=="]
+      }
+    ],
+    "more": true,
+    "nextStart": "001892898"
+  },
+  {
+    "partitionKey": "keys",
+    "prefix": null,
+    "start": "0",
+    "end": null,
+    "limit": null,
+    "reverse": false,
+    "conflictsOnly": false,
+    "tombstones": false,
+    "singleItem": true,
+    "items": [
+      {
+        "sk": "0",
+        "ct": "opaquetoken999",
+        "v": ["YjY0YmluYXJ5c3R1ZmY5OTk="]
+      }
+    ],
+    "more": false,
+    "nextStart": null
+  }
+]
+```
+
+<Note>
+When `singleItem` is true, you cannot specify `prefix`, `end`, `limit`, or `reverse` parameters.
+</Note>
+
+---
+
+### InsertBatch
+
+Insert or update multiple items in a single request.
+
+**Endpoint**: `POST /<bucket>`
+
+**Request Body**: JSON array of item objects
+
+**Item Object Fields**:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `pk` | Yes | Partition key |
+| `sk` | Yes | Sort key |
+| `ct` | No | Causality token from previous read (null for new items) |
+| `v` | No | Base64-encoded value (null for tombstone/delete) |
+
+**Response**: HTTP 204 NO CONTENT on success
+
+**Example Request**:
+
+```json
+POST /my-bucket HTTP/1.1
+Host: k2v.garage.example.com
+Content-Type: application/json
+
+[
+  {
+    "pk": "mailbox:INBOX",
+    "sk": "001892831",
+    "ct": "opaquetoken321",
+    "v": "YjY0Y3J5cHRvYmxvYjMyMXVwZGF0ZWQ="
+  },
+  {
+    "pk": "mailbox:INBOX",
+    "sk": "001892912",
+    "ct": null,
+    "v": "YjY0Y3J5cHRvYmxvYjQ0NA=="
+  },
+  {
+    "pk": "mailbox:INBOX",
+    "sk": "001892932",
+    "ct": "opaquetoken654",
+    "v": null
+  }
+]
+```
+
+**Example Response**:
+
+```bash
+HTTP/1.1 204 NO CONTENT
+```
+
+<Warning>
+Batch operations are not transactions. If the operation fails, some items may be inserted while others are not. Check the response status carefully.
+</Warning>
+
+---
+
+### DeleteBatch
+
+Delete multiple items matching specified criteria.
+
+**Endpoint**: `POST /<bucket>?delete`
+
+**Request Body**: JSON array of query objects
+
+**Query Object Fields**:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `partitionKey` | Yes | - | Partition key to delete from |
+| `prefix` | No | `null` | Filter sort keys by prefix |
+| `start` | No | `null` | First sort key to delete |
+| `end` | No | `null` | Last sort key to delete (exclusive) |
+| `singleItem` | No | `false` | Delete only item with sort key = `start` |
+
+**Response**: JSON array of result objects
+
+**Result Object Fields**:
+
+| Field | Description |
+|-------|-------------|
+| `partitionKey` | Echo of query partition key |
+| `prefix`, `start`, `end` | Echo of query parameters |
+| `singleItem` | Echo of query flag |
+| `deletedItems` | Number of items deleted |
+
+**Example Request**:
+
+```json
+POST /my-bucket?delete HTTP/1.1
+Host: k2v.garage.example.com
+Content-Type: application/json
+
+[
+  {
+    "partitionKey": "mailbox:OldMailbox"
+  },
+  {
+    "partitionKey": "mailbox:INBOX",
+    "start": "0018928321",
+    "singleItem": true
+  }
+]
+```
+
+**Example Response**:
+
+```json
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+[
+  {
+    "partitionKey": "mailbox:OldMailbox",
+    "prefix": null,
+    "start": null,
+    "end": null,
+    "singleItem": false,
+    "deletedItems": 35
+  },
+  {
+    "partitionKey": "mailbox:INBOX",
+    "prefix": null,
+    "start": "0018928321",
+    "end": null,
+    "singleItem": true,
+    "deletedItems": 1
+  }
+]
+```
+
+<Note>
+DeleteBatch internally reads all matching items and creates deletion tombstones with causality tokens. You don't need to provide causality tokens in the request.
+</Note>
+
+---
+
+### PollRange
+
+Wait for changes to items in a range.
+
+**Endpoint**: `POST /<bucket>/<partition_key>?poll_range` or `SEARCH /<bucket>/<partition_key>?poll_range`
+
+**Request Body**: JSON object
+
+**Request Fields**:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `prefix` | No | `null` | Filter sort keys by prefix |
+| `start` | No | `null` | First sort key to poll |
+| `end` | No | `null` | Last sort key to poll (exclusive) |
+| `timeout` | No | 300 | Timeout in seconds (max 600) |
+| `seenMarker` | No | `null` | Opaque string from previous PollRange call |
+
+**Response**: HTTP 304 NOT MODIFIED (timeout), or HTTP 200 with JSON object
+
+**Response Object Fields** (when HTTP 200):
+
+| Field | Description |
+|-------|-------------|
+| `seenMarker` | Opaque string to use in future PollRange calls |
+| `items` | Array of changed items (same format as ReadBatch) |
+
+**Example Request**:
+
+```json
+SEARCH /my-bucket/messages?poll_range HTTP/1.1
+Host: k2v.garage.example.com
+Content-Type: application/json
+
+{
+  "prefix": "2024-03-",
+  "start": "2024-03-01",
+  "seenMarker": "opaquestring123"
+}
+```
+
+**Example Response (Changes Detected)**:
+
+```json
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "seenMarker": "opaquestring456",
+  "items": [
+    {
+      "sk": "2024-03-15-msg001",
+      "ct": "opaquetoken123",
+      "v": ["YjY0Y3J5cHRvYmxvYjEyMw=="]
+    },
+    {
+      "sk": "2024-03-15-msg002",
+      "ct": "opaquetoken456",
+      "v": ["YjY0Y3J5cHRvYmxvYjQ1Ng=="]
+    }
+  ]
+}
+```
+
+**Example Response (No Changes)**:
+
+```bash
+HTTP/1.1 304 NOT MODIFIED
+```
+
+<Note>
+If you call PollRange without a `seenMarker`, it will return immediately with the current range contents and provide a marker for future calls. This is useful for initializing your polling state.
+</Note>
+
+---
+
+## Index Operations
+
+### ReadIndex
+
+List partition keys and get aggregate statistics.
+
+**Endpoint**: `GET /<bucket>`
+
+**Query Parameters**:
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `prefix` | No | `null` | Filter partition keys by prefix |
+| `start` | No | `null` | First partition key to list |
+| `end` | No | `null` | Last partition key to list (exclusive) |
+| `limit` | No | `null` | Maximum number of partition keys to return |
+| `reverse` | No | `false` | Iterate in reverse order |
+
+**Response**: JSON object with partition key statistics
+
+**Response Fields**:
+
+| Field | Description |
+|-------|-------------|
+| `prefix`, `start`, `end`, `limit`, `reverse` | Echo of query parameters |
+| `partitionKeys` | Array of partition key statistics |
+| `more` | Boolean indicating more partition keys available |
+| `nextStart` | Partition key to use for next page (if `more` is true) |
+
+**Partition Key Statistics**:
+
+| Field | Description |
+|-------|-------------|
+| `pk` | The partition key |
+| `entries` | Number of triplets in this partition |
+| `conflicts` | Number of triplets with conflicts |
+| `values` | Total number of values (>= entries if conflicts exist) |
+| `bytes` | Total bytes of all values |
+
+**Example Request**:
+
+```bash
+GET /my-bucket HTTP/1.1
+Host: k2v.garage.example.com
+```
+
+**Example Response**:
+
+```json
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "prefix": null,
+  "start": null,
+  "end": null,
+  "limit": null,
+  "reverse": false,
+  "partitionKeys": [
+    {
+      "pk": "keys",
+      "entries": 3043,
+      "conflicts": 0,
+      "values": 3043,
+      "bytes": 121720
+    },
+    {
+      "pk": "mailbox:INBOX",
+      "entries": 42,
+      "conflicts": 1,
+      "values": 43,
+      "bytes": 142029
+    },
+    {
+      "pk": "mailbox:Junk",
+      "entries": 2991,
+      "conflicts": 0,
+      "values": 2991,
+      "bytes": 12019322
+    },
+    {
+      "pk": "mailbox:Trash",
+      "entries": 10,
+      "conflicts": 0,
+      "values": 10,
+      "bytes": 32401
+    },
+    {
+      "pk": "mailboxes",
+      "entries": 3,
+      "conflicts": 0,
+      "values": 3,
+      "bytes": 3019
+    }
+  ],
+  "more": false,
+  "nextStart": null
+}
+```
+
+<Note>
+Index statistics are eventually consistent. They are updated asynchronously, so the counts may lag behind actual values, especially for recently modified partitions.
+</Note>
+
+---
+
+## Common Headers
+
+### Request Headers
+
+| Header | Used In | Description |
+|--------|---------|-------------|
+| `X-Garage-Causality-Token` | InsertItem, DeleteItem | Causality token from previous read |
+| `Accept` | ReadItem, PollItem | Controls response format (JSON vs binary) |
+| `Content-Type` | InsertBatch, ReadBatch, DeleteBatch, PollRange | Should be `application/json` for JSON requests |
+
+### Response Headers
+
+| Header | Returned By | Description |
+|--------|-------------|-------------|
+| `X-Garage-Causality-Token` | ReadItem, PollItem | Causality token for the current item state |
+| `Content-Type` | All | MIME type of response body |
+
+---
+
+## Error Responses
+
+Common HTTP error codes:
+
+| Code | Name | Description |
+|------|------|-------------|
+| 400 | Bad Request | Invalid parameters or malformed request |
+| 404 | Not Found | Item or bucket not found |
+| 406 | Not Acceptable | Invalid Accept header |
+| 409 | Conflict | Multiple concurrent values when binary format requested |
+| 500 | Internal Server Error | Server-side error (value may still be stored on some nodes) |
+
+<Warning>
+HTTP 500 errors don't guarantee the operation failed. Due to eventual consistency, the operation may succeed on some nodes even if quorum wasn't reached. The value will propagate asynchronously.
+</Warning>

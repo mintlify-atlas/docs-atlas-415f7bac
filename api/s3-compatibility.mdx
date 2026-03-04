@@ -1,0 +1,308 @@
+---
+title: S3 API Compatibility
+description: Detailed compatibility matrix for AWS S3 API endpoints in Garage
+---
+
+<Warning>
+**Compatibility Disclaimer**
+
+The compatibility information for other S3-compatible platforms (OpenStack Swift, Ceph, Riak CS, OpenIO) is provided for informational purposes only and based on available documentation. This information may be inexact or outdated. For critical decisions, conduct your own testing.
+
+Last updated: May 25, 2022
+</Warning>
+
+## Garage S3 Compatibility Status
+
+Garage implements a substantial subset of the Amazon S3 API. All unimplemented endpoints return `501 Not Implemented`. Some `x-amz-` headers are not implemented.
+
+### High-Level Features
+
+| Feature | Garage Status | Notes |
+|---------|---------------|-------|
+| [Signature v4](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html) | ✅ Implemented | Recommended authentication method |
+| [Signature v2](https://docs.aws.amazon.com/AmazonS3/latest/API/Appendix-Sigv2.html) | ❌ Missing | Deprecated by AWS |
+| [URL path-style](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#path-style-access) | ✅ Implemented | `host.tld/bucket/key` |
+| [URL vhost-style](https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html#virtual-hosted-style-access) | ✅ Implemented | `bucket.host.tld/key` |
+| [Presigned URLs](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html) | ✅ Implemented | Temporary access links |
+| [SSE-C encryption](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerSideEncryptionCustomerKeys.html) | ✅ Implemented | Customer-provided keys |
+| [Bucket versioning](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html) | ❌ Missing | Not yet supported |
+
+---
+
+## Endpoint Implementation Status
+
+### Core Bucket & Object Operations
+
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| [CreateBucket](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html) | ✅ Implemented | |
+| [DeleteBucket](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucket.html) | ✅ Implemented | |
+| [GetBucketLocation](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLocation.html) | ✅ Implemented | |
+| [HeadBucket](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadBucket.html) | ✅ Implemented | |
+| [ListBuckets](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListBuckets.html) | ✅ Implemented | |
+| [HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html) | ✅ Implemented | |
+| [GetObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html) | ✅ Implemented | |
+| [PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html) | ✅ Implemented | |
+| [CopyObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html) | ✅ Implemented | |
+| [DeleteObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html) | ✅ Implemented | |
+| [DeleteObjects](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html) | ✅ Implemented | Batch delete |
+| [ListObjects](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html) | ✅ Implemented | See notes below |
+| [ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html) | ✅ Implemented | |
+| [PostObject](https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectPOST.html) | ✅ Implemented | Browser-based uploads |
+
+<Note>
+**ListObjects Implementation Note**
+
+The `encoding-type=url` parameter is implemented but may have edge cases. URL-encoded fields match ListObjectsV2 behavior.
+</Note>
+
+---
+
+### Multipart Upload
+
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| [CreateMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html) | ✅ Implemented | |
+| [UploadPart](https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPart.html) | ✅ Implemented | |
+| [UploadPartCopy](https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html) | ✅ Implemented | |
+| [CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html) | ✅ Implemented | |
+| [AbortMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html) | ✅ Implemented | |
+| [ListMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUpload.html) | ✅ Implemented | |
+| [ListParts](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html) | ✅ Implemented | |
+
+---
+
+### Website Hosting
+
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| [PutBucketWebsite](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketWebsite.html) | ⚠️ Partial | See notes below |
+| [GetBucketWebsite](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketWebsite.html) | ✅ Implemented | |
+| [DeleteBucketWebsite](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketWebsite.html) | ✅ Implemented | |
+
+<Note>
+**PutBucketWebsite Limitations**
+
+Only stores the index document suffix and error document path. Redirect rules are not supported.
+</Note>
+
+---
+
+### CORS (Cross-Origin Resource Sharing)
+
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| [PutBucketCors](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketCors.html) | ✅ Implemented | |
+| [GetBucketCors](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketCors.html) | ✅ Implemented | |
+| [DeleteBucketCors](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketCors.html) | ✅ Implemented | |
+
+---
+
+### Lifecycle Management
+
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| [PutBucketLifecycleConfiguration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html) | ⚠️ Partial | See notes below |
+| [GetBucketLifecycleConfiguration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLifecycleConfiguration.html) | ✅ Implemented | |
+| [DeleteBucketLifecycle](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketLifecycle.html) | ✅ Implemented | |
+
+<Note>
+**PutBucketLifecycleConfiguration Limitations**
+
+Supported actions:
+- `AbortIncompleteMultipartUpload`
+- `Expiration` (without `ExpiredObjectDeleteMarker`)
+
+Not supported:
+- Versioning-dependent operations
+- Storage class transitions
+- Deprecated `Prefix` in `Rule` (use `Filter` instead)
+</Note>
+
+---
+
+### Versioning
+
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| [GetBucketVersioning](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketVersioning.html) | ⚠️ Stub | Always returns "not enabled" |
+| [PutBucketVersioning](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html) | ❌ Missing | Versioning not supported |
+| [ListObjectVersions](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html) | ❌ Missing | Versioning not supported |
+
+<Info>
+Bucket versioning is not yet supported in Garage. If you need this feature, please share your use case in [Issue #166](https://git.deuxfleurs.fr/Deuxfleurs/garage/issues/166).
+</Info>
+
+---
+
+### Access Control (ACLs & Policies)
+
+<Warning>
+**Custom Permission System**
+
+Garage does not implement AWS ACLs or bucket policies. Instead, it uses its own permission system based on per-access-key-per-bucket logic. Use the Garage CLI to manage permissions.
+</Warning>
+
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| [PutBucketPolicy](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketPolicy.html) | ❌ Missing | Use Garage CLI |
+| [GetBucketPolicy](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html) | ❌ Missing | Use Garage CLI |
+| [DeleteBucketPolicy](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketPolicy.html) | ❌ Missing | Use Garage CLI |
+| [GetBucketPolicyStatus](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicyStatus.html) | ❌ Missing | Use Garage CLI |
+| [PutBucketAcl](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html) | ❌ Missing | Use Garage CLI |
+| [GetBucketAcl](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAcl.html) | ❌ Missing | Use Garage CLI |
+| [PutObjectAcl](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectAcl.html) | ❌ Missing | Use Garage CLI |
+| [GetObjectAcl](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAcl.html) | ❌ Missing | Use Garage CLI |
+
+---
+
+### Replication
+
+<Info>
+Replication is not currently supported. If you have a use case for replication, please open an issue on the Garage repository.
+</Info>
+
+| Endpoint | Status |
+|----------|--------|
+| [PutBucketReplication](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketReplication.html) | ❌ Missing |
+| [GetBucketReplication](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketReplication.html) | ❌ Missing |
+| [DeleteBucketReplication](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketReplication.html) | ❌ Missing |
+
+---
+
+### Object Locking
+
+<Info>
+Object locking (retention and legal hold) is not currently supported.
+</Info>
+
+| Endpoint | Status |
+|----------|--------|
+| [PutObjectLockConfiguration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectLockConfiguration.html) | ❌ Missing |
+| [GetObjectLockConfiguration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectLockConfiguration.html) | ❌ Missing |
+| [PutObjectRetention](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectRetention.html) | ❌ Missing |
+| [GetObjectRetention](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectRetention.html) | ❌ Missing |
+| [PutObjectLegalHold](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectLegalHold.html) | ❌ Missing |
+| [GetObjectLegalHold](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectLegalHold.html) | ❌ Missing |
+
+---
+
+### Bucket Encryption
+
+<Info>
+**Encryption Recommendation**
+
+Garage does not implement server-side bucket encryption configuration. Instead:
+- Encrypt your server partitions at the storage level
+- Use client-side encryption
+- Use SSE-C (Customer-Provided Keys) for per-object encryption
+
+If you have a specific use case for bucket-level encryption configuration, please open an issue.
+</Info>
+
+| Endpoint | Status |
+|----------|--------|
+| [PutBucketEncryption](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketEncryption.html) | ❌ Missing |
+| [GetBucketEncryption](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketEncryption.html) | ❌ Missing |
+| [DeleteBucketEncryption](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketEncryption.html) | ❌ Missing |
+
+---
+
+### Tagging
+
+| Endpoint | Status |
+|----------|--------|
+| [PutBucketTagging](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketTagging.html) | ❌ Missing |
+| [GetBucketTagging](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketTagging.html) | ❌ Missing |
+| [DeleteBucketTagging](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketTagging.html) | ❌ Missing |
+| [PutObjectTagging](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectTagging.html) | ❌ Missing |
+| [GetObjectTagging](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectTagging.html) | ❌ Missing |
+| [DeleteObjectTagging](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjectTagging.html) | ❌ Missing |
+
+---
+
+### Notifications
+
+| Endpoint | Status |
+|----------|--------|
+| [PutBucketNotificationConfiguration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketNotificationConfiguration.html) | ❌ Missing |
+| [GetBucketNotificationConfiguration](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketNotificationConfiguration.html) | ❌ Missing |
+
+---
+
+### Other Endpoints
+
+| Endpoint | Status |
+|----------|--------|
+| [GetObjectTorrent](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectTorrent.html) | ❌ Missing |
+
+---
+
+## AWS-Specific Features Not Implemented
+
+The following AWS-specific endpoints are not implemented and are unlikely to be supported:
+
+- Bucket Analytics
+- Intelligent Tiering
+- Inventory Configuration
+- Metrics Configuration
+- Ownership Controls
+- Public Access Block
+- Transfer Acceleration
+- Request Payment
+- Logging
+- Object SELECT queries
+- Glacier/Archive operations
+
+---
+
+## Using S3 Clients with Garage
+
+Most S3-compatible clients work with Garage. Popular tools include:
+
+- **AWS CLI** - Official command-line tool
+- **s3cmd** - Feature-rich CLI client
+- **rclone** - Sync and backup tool
+- **Minio Client (mc)** - Modern CLI alternative
+- **Cyberduck** - GUI client (macOS/Windows)
+- **WinSCP** - GUI client (Windows)
+
+For SDK integration, Garage works with:
+- AWS SDK for JavaScript/Node.js
+- AWS SDK for Python (boto3)
+- AWS SDK for Go
+- AWS SDK for Rust
+- AWS SDK for Java
+
+### Configuration Tips
+
+1. Set the endpoint URL to your Garage instance
+2. Configure signature version 4
+3. Disable SSL verification if using self-signed certificates in development
+4. Use path-style URLs if virtual-host style is not configured
+
+---
+
+## Compatibility Testing
+
+Garage's S3 compatibility is continuously tested against common S3 clients and SDKs. However, some edge cases may not be covered. If you encounter compatibility issues:
+
+1. Check this compatibility matrix
+2. Search existing issues on the Garage repository
+3. Report the issue with:
+   - Client/SDK name and version
+   - Garage version
+   - Request details and error messages
+   - Minimal reproduction steps
+
+---
+
+## Contributing
+
+If you find errors in this compatibility matrix or have tested additional endpoints, please:
+
+1. Open a pull request on the Garage repository
+2. Update the compatibility documentation
+3. Include testing methodology and results
+
+Help us keep this information accurate and up-to-date!

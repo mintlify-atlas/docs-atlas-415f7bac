@@ -1,0 +1,196 @@
+---
+title: "Key Features and Capabilities"
+description: "Explore Garage's feature set and what makes it unique"
+icon: "stars"
+---
+
+Garage provides a comprehensive set of features designed for geo-distributed object storage. This page outlines the key capabilities that make Garage unique.
+
+## Core features
+
+### S3 API compatibility
+
+The main goal of Garage is to provide object storage compatible with the [S3 API](https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html) from Amazon Web Services.
+
+<Info>
+  Garage adheres as strictly as possible to the semantics of the API as implemented by Amazon and other vendors such as MinIO and Ceph.
+</Info>
+
+While Garage doesn't implement the full span of API endpoints that AWS S3 does, it covers the most commonly used features. For the exact list of supported S3 features, see the [S3 compatibility reference](/api/s3-compatibility).
+
+### Geo-distribution
+
+Garage allows you to store copies of your data in multiple geographical locations to maximize resilience to adverse events such as:
+
+- Network outages
+- Power failures
+- Hardware failures
+
+<Card title="Consumer-grade infrastructure" icon="house">
+  Garage runs well even at home using consumer-grade Internet connectivity (such as FTTH) and power, as long as cluster nodes span several physical locations.
+</Card>
+
+Garage exploits knowledge of the capacity and physical location of each storage node to design a storage plan that:
+- Best exploits available storage capacity
+- Satisfies geo-distributed replication constraints
+
+### Standalone and self-contained
+
+Garage is extremely simple to deploy and doesn't depend on any external service to run.
+
+<Check>
+  Setting up and administering storage clusters is as easy as it could be—no databases, no coordination services, no external dependencies.
+</Check>
+
+### Flexible topology
+
+A Garage cluster can easily evolve over time as storage nodes are added or removed. Garage automatically rebalances data between nodes to ensure the desired number of copies.
+
+**Benefits:**
+- Start small and grow as needed
+- Remove failed or outdated nodes gracefully
+- No manual data migration required
+
+### Multiple replication modes
+
+Garage supports a variety of replication modes with:
+- Configurable replica count
+- Various levels of consistency
+- Adaptation to different usage scenarios
+
+<Tip>
+  In most cases, `replication_factor = 3` is what you want for the best balance of reliability and resource usage.
+</Tip>
+
+## Storage optimizations
+
+### Compression and deduplication
+
+All data stored in Garage is deduplicated and optionally compressed using Zstd.
+
+**How it works:**
+1. Objects uploaded to Garage are chunked into blocks of constant size
+2. Hashes of individual blocks are used to:
+   - Dispatch them to storage nodes
+   - Deduplicate identical blocks
+3. Optional Zstd compression reduces storage requirements
+
+### No RAFT bottleneck
+
+<Warning>
+  It might seem strange to tout the absence of something as a feature, but this is a very important point!
+</Warning>
+
+Garage doesn't use RAFT or another consensus algorithm internally to order incoming requests. This means:
+
+- **Parallel request handling**: All requests can be handled independently
+- **No central bottleneck**: No single leader node processing all requests
+- **Faster responses**: Especially beneficial when latency between cluster nodes is significant
+- **Internet-friendly**: Particularly useful when nodes communicate through standard Internet connections
+
+## Application features
+
+### Web server for static websites
+
+A storage bucket can easily be configured to be served directly by Garage as a static website.
+
+**Key capabilities:**
+- Domain names directly map to bucket names
+- Easy platform creation for users to autonomously build and host websites
+- Inherited from AWS S3 (surprisingly not supported by MinIO or Ceph)
+
+### Bucket aliases
+
+In Garage, a bucket may have several names, known as aliases.
+
+<CardGroup cols={2}>
+  <Card title="Easy renaming" icon="pen">
+    Rename buckets without copying all content—something AWS can't do
+  </Card>
+  
+  <Card title="Multiple domains" icon="globe">
+    Expose the same content under different domain names for static websites
+  </Card>
+  
+  <Card title="Local aliases" icon="user">
+    Different users can have different buckets with the same name, avoiding collisions
+  </Card>
+  
+  <Card title="S3 compatible" icon="check">
+    Feature is invisible to S3 clients and doesn't break AWS compatibility
+  </Card>
+</CardGroup>
+
+**Use case example:**
+
+If you're building an application that creates per-user buckets with the same name, local aliases allow each user to have their own `my-bucket` without conflicts.
+
+## Administration features
+
+### Cluster administration API
+
+Garage provides a fully-fledged REST API to administer your cluster programmatically.
+
+**Functionality includes:**
+- Setting up and monitoring cluster nodes
+- Managing access credentials
+- Managing storage buckets and bucket aliases
+
+### Metrics and traces
+
+Garage makes internal metrics available in **Prometheus** data format, allowing you to:
+- Build interactive dashboards
+- Visualize cluster load
+- Monitor internal state
+
+**For developers and performance-savvy administrators:**
+
+Garage supports exporting traces in **OpenTelemetry** format to:
+- Monitor time spent at various processing steps
+- Detect potential performance bottlenecks
+- Understand internal request handling
+
+## Infrastructure integration
+
+### Kubernetes and Nomad support
+
+Garage can automatically discover other nodes in the cluster through integration with:
+
+- **Kubernetes**: Native service discovery
+- **Nomad**: When used with Consul
+
+<Check>
+  This eases cluster configuration by removing manual node connection steps.
+</Check>
+
+### Dynamic IP address support
+
+As long as all nodes don't change their IP address simultaneously, Garage tolerates nodes with changing/dynamic IP addresses.
+
+**How it works:**
+- Nodes regularly exchange IP addresses with peers
+- Automatic reconnection using newer addresses when connections break
+- Particularly useful for home deployments with dynamic DNS
+
+## Experimental features
+
+### K2V API
+
+<Warning>
+  K2V is an experimental feature developed as part of ongoing research.
+</Warning>
+
+Garage can expose an experimental key/value storage API called K2V.
+
+**What it's for:**
+- Storage and retrieval of many small key/value pairs
+- Bulk processing capabilities
+- Metadata storage related to S3 objects
+
+**Use case: Aérogramme**
+
+In the [Aérogramme](https://aerogramme.deuxfleurs.fr) project, K2V provides metadata and log storage for operations on encrypted email storage.
+
+<Tip>
+  Learn more in the [K2V specification](https://git.deuxfleurs.fr/Deuxfleurs/garage/src/commit/f8be15c37db857e177d543de7be863692628d567/doc/drafts/k2v-spec.md).
+</Tip>
