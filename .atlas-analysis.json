@@ -1,0 +1,178 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Garage",
+  "projectDescription": "S3-compatible object store for small self-hosted geo-distributed deployments",
+  "theme": "aspen",
+  "primaryColor": "#fa932c",
+  "lightColor": "#524e4b",
+  "darkColor": "#a8713b",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quick-start"
+            ]
+          },
+          {
+            "group": "Design & Architecture",
+            "pages": [
+              "design/goals",
+              "design/features",
+              "design/internals",
+              "design/related-work"
+            ]
+          },
+          {
+            "group": "Installation",
+            "pages": [
+              "installation/binary-packages",
+              "installation/from-source",
+              "installation/docker"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/single-node",
+              "deployment/multi-node",
+              "deployment/kubernetes",
+              "deployment/systemd"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/cluster-layout",
+              "operations/durability-repairs",
+              "operations/upgrading",
+              "operations/recovering",
+              "operations/multi-hdd",
+              "operations/monitoring"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "integration/cli-tools",
+              "integration/applications",
+              "integration/websites"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/reverse-proxy",
+              "advanced/encryption",
+              "advanced/gateways",
+              "advanced/k2v"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/s3-compatibility"
+            ]
+          },
+          {
+            "group": "S3 API",
+            "pages": [
+              "api/s3/authentication",
+              "api/s3/bucket-operations",
+              "api/s3/object-operations",
+              "api/s3/multipart-uploads"
+            ]
+          },
+          {
+            "group": "Admin API",
+            "pages": [
+              "api/admin/overview",
+              "api/admin/cluster",
+              "api/admin/buckets",
+              "api/admin/keys"
+            ]
+          },
+          {
+            "group": "K2V API",
+            "pages": [
+              "api/k2v/overview",
+              "api/k2v/operations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/overview",
+              "cli/server",
+              "cli/node",
+              "cli/layout",
+              "cli/bucket",
+              "cli/key",
+              "cli/repair"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "cli/configuration",
+              "cli/environment-variables"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "S3-compatible object storage",
+    "Geo-distributed replication",
+    "Self-contained deployment with no external dependencies",
+    "Flexible cluster topology with automatic rebalancing",
+    "Multiple replication modes with configurable consistency",
+    "Built-in data deduplication and compression",
+    "Static website hosting",
+    "Admin API for cluster management",
+    "K2V API for small value storage",
+    "No RAFT consensus for better performance",
+    "Multi-datacenter support",
+    "Prometheus metrics"
+  ],
+  "publicApiSurface": [
+    "garage server - Start Garage server",
+    "garage status - Get network status",
+    "garage node id - Print node ID",
+    "garage node connect - Connect to isolated node",
+    "garage layout assign - Assign role to node",
+    "garage layout remove - Remove role from node",
+    "garage layout show - Show cluster layout",
+    "garage layout apply - Apply layout changes",
+    "garage bucket create - Create bucket",
+    "garage bucket list - List buckets",
+    "garage bucket info - Show bucket info",
+    "garage bucket allow - Grant bucket permissions",
+    "garage bucket deny - Revoke bucket permissions",
+    "garage key create - Create API key",
+    "garage key list - List API keys",
+    "garage key info - Show key info",
+    "garage repair - Start data repair",
+    "garage stats - Gather node statistics",
+    "garage worker - Manage background workers",
+    "S3 API - Full S3-compatible REST API",
+    "Admin API - Cluster administration REST API",
+    "K2V API - Key-value storage API"
+  ]
+}
